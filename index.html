@@ -330,20 +330,23 @@
   const fullscreenBtn   = document.getElementById('fullscreen-btn');
   const errorOverlay    = document.getElementById('error-overlay');
 
-  // ── On load: check URL query params ───────────────────────────────────────
+  // ── On load: check URL hash ────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', () => {
-    const params = new URLSearchParams(location.search);
-    const albumParam = params.get('album');
-    const itemParam  = params.get('item');
-    if (albumParam) {
-      if (itemParam) {
-        inputScreen.style.display = 'none';
-        openViewer();
-        spinner.style.display = 'block';
-      } else {
-        setInputStatus('Loading album\u2026');
+    const hash = location.hash.slice(1);
+    if (hash) {
+      const parts = hash.split('/').filter(Boolean);
+      if (parts.length >= 1) {
+        const albumParam = decodeURIComponent(parts[0]);
+        const itemParam  = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : null;
+        if (itemParam) {
+          inputScreen.style.display = 'none';
+          openViewer();
+          spinner.style.display = 'block';
+        } else {
+          setInputStatus('Loading album\u2026');
+        }
+        parseAndLoad(albumParam, itemParam);
       }
-      parseAndLoad(albumParam, itemParam);
     }
   });
 
@@ -365,14 +368,14 @@
       return;
     }
 
-    // App URL (e.g. https://yadisk-album-viewer.pages.dev/?album=KEY&item=file.jpg)
+    // App URL (e.g. http://localhost:8000/KEY/file.jpg or https://yadisk-album-viewer.pages.dev/KEY/file.jpg)
     try {
       const url = new URL(value);
-      const qAlbum = url.searchParams.get('album');
-      if (qAlbum) {
-        albumKey = qAlbum;
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (parts.length >= 1) {
+        albumKey = decodeURIComponent(parts[0]);
         publicKey = `https://disk.yandex.com/d/${albumKey}`;
-        imageFile = imageFile || url.searchParams.get('item') || null;
+        imageFile = imageFile || (parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : null);
         loadAlbum(imageFile || null);
         return;
       }
@@ -454,7 +457,7 @@
         await showPhoto(idx >= 0 ? idx : 0);
       } else {
         // No specific item — show gallery preview
-        history.replaceState(null, '', '?album=' + encodeURIComponent(albumKey));
+        history.replaceState(null, '', '#' + albumKey);
         showGallery();
       }
 
@@ -510,7 +513,7 @@
     gallery.classList.remove('active');
     if (!thumbStrip.children.length) buildThumbs();
     openViewer();
-    history.replaceState(null, '', '?album=' + encodeURIComponent(albumKey) + '&item=' + encodeURIComponent(photos[idx].name));
+    history.replaceState(null, '', '#' + albumKey + '/' + encodeURIComponent(photos[idx].name));
     showPhoto(idx, { scrollThumbs: false });
   }
 
@@ -534,7 +537,7 @@
 
     if (fromGallery) {
       fromGallery = false;
-      history.replaceState(null, '', '?album=' + encodeURIComponent(albumKey));
+      history.replaceState(null, '', '#' + albumKey);
       showGallery();
     } else {
       photos = []; publicKey = ''; albumKey = ''; currentIndex = 0;
@@ -732,7 +735,8 @@
 
   function updateUrl() {
     if (!albumKey || !photos.length) return;
-    history.replaceState(null, '', '?album=' + encodeURIComponent(albumKey) + '&item=' + encodeURIComponent(photos[currentIndex].name));
+    const name = encodeURIComponent(photos[currentIndex].name);
+    history.replaceState(null, '', '#' + albumKey + '/' + name);
   }
 </script>
 </body>
