@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>Yandex Disk Album Viewer</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23111'/><rect x='4' y='9' width='24' height='16' rx='3' fill='none' stroke='%23fc3f1d' stroke-width='2'/><circle cx='16' cy='17' r='4.5' fill='none' stroke='%23fc3f1d' stroke-width='2'/><rect x='11' y='6' width='6' height='4' rx='1.5' fill='%23fc3f1d'/></svg>">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #111; color: #fff; font-family: Arial, sans-serif; height: 100dvh; overflow: hidden; }
+
+    /* ── Input screen ── */
+    #input-screen {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 100dvh; gap: 16px; padding: 24px;
+    }
+    #input-screen h2 { font-size: 22px; font-weight: normal; text-align: center; }
+    #input-screen p  { color: #888; text-align: center; line-height: 1.7; font-size: 14px; }
+    #input-screen code { color: #fc3f1d; }
+    #album-input {
+      width: 100%; max-width: 520px; padding: 13px 16px; font-size: 16px;
+      border-radius: 10px; border: 1px solid #444; background: #222; color: #fff;
+      outline: none; -webkit-appearance: none; appearance: none;
+    }
+    #album-input:focus { border-color: #fc3f1d; }
+    #load-btn {
+      padding: 13px 40px; font-size: 16px; background: #fc3f1d; color: #fff;
+      border: none; border-radius: 10px; cursor: pointer; touch-action: manipulation;
+    }
+    #load-btn:active { background: #c93218; }
+    #input-status { color: #aaa; font-size: 14px; min-height: 20px; text-align: center; }
+
+    /* ── Gallery screen ── */
+    #gallery {
+      display: none; position: fixed; inset: 0;
+      flex-direction: column; background: #111;
+    }
+    #gallery.active { display: flex; }
+
+    #gallery-topbar {
+      flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+      padding: 12px 16px; background: #1a1a1a; border-bottom: 1px solid #2a2a2a;
+    }
+    #gallery-title { font-size: 15px; color: #ddd; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #gallery-count { font-size: 13px; color: #777; flex-shrink: 0; }
+    #gallery-close-btn {
+      background: none; border: none; color: #bbb; cursor: pointer;
+      padding: 6px 8px; border-radius: 6px; line-height: 1; flex-shrink: 0;
+      touch-action: manipulation; font-size: 20px;
+    }
+    #gallery-close-btn:hover, #gallery-close-btn:active { color: #fff; background: rgba(255,255,255,.15); }
+
+    #gallery-grid {
+      flex: 1; min-height: 0; overflow-y: auto; padding: 4px;
+      display: grid; align-content: start;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+    #gallery-grid::-webkit-scrollbar { width: 4px; }
+    #gallery-grid::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+
+    .gallery-tile {
+      position: relative; width: 100%; height: 0; padding-bottom: 100%;
+      cursor: pointer; background: #1a1a1a; overflow: hidden; border-radius: 3px;
+      touch-action: manipulation;
+    }
+    .gallery-tile img {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; display: block; transition: opacity .15s;
+    }
+    .gallery-tile:hover img, .gallery-tile:active img { opacity: .8; }
+
+    /* tile loading spinner */
+    .gallery-tile::before {
+      content: ''; position: absolute; inset: 0; margin: auto;
+      width: 24px; height: 24px;
+      border: 2px solid rgba(255,255,255,.15); border-top-color: #fc3f1d;
+      border-radius: 50%; animation: spin .7s linear infinite;
+      pointer-events: none;
+    }
+    .gallery-tile.loaded::before { display: none; }
+    .gallery-tile-play {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 36px; height: 36px; border-radius: 50%;
+      background: rgba(0,0,0,.6);
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: none;
+    }
+    .gallery-tile-play::after {
+      content: '▶'; font-size: 14px; color: #fff; margin-left: 3px;
+    }
+
+    @media (max-width: 480px) {
+      #gallery-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+    }
+
+    /* ── Viewer ── */
+    #viewer {
+      display: none; position: fixed; inset: 0;
+      background: #000; flex-direction: column;
+    }
+    #viewer.active { display: flex; }
+
+    /* top trigger + top bar */
+    #top-trigger {
+      position: absolute; top: 0; left: 0; right: 0; height: 40px; z-index: 19;
+    }
+    #topbar {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 20;
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 16px;
+      background: linear-gradient(to bottom, rgba(0,0,0,.8) 0%, transparent 100%);
+      transform: translateY(-100%); transition: transform .25s ease;
+    }
+    #viewer.thumbs-open #topbar { transform: translateY(0); }
+    #top-trigger:hover ~ #topbar,
+    #topbar:hover { transform: translateY(0); }
+    #photo-counter { font-size: 13px; color: #bbb; white-space: nowrap; flex-shrink: 0; }
+    #photo-name    { font-size: 13px; color: #bbb; flex: 1; text-align: center;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .topbar-btn {
+      background: none; border: none; color: #bbb; cursor: pointer;
+      padding: 6px 8px; border-radius: 6px; line-height: 1; flex-shrink: 0;
+      touch-action: manipulation; font-size: 18px;
+    }
+    .topbar-btn:hover, .topbar-btn:active { color: #fff; background: rgba(255,255,255,.15); }
+    #thumbs-btn.on    { color: #fc3f1d; }
+    #hires-btn.on     { color: #fc3f1d; }
+    #fullscreen-btn.on { color: #fc3f1d; }
+    #close-btn { font-size: 20px; }
+
+    /* main photo area */
+    #photo-area {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+      padding-top: 0;
+      padding-bottom: 0;
+      transition: padding-top .25s ease, padding-bottom .25s ease;
+    }
+    #viewer.thumbs-open #photo-area { padding-top: 52px; padding-bottom: 116px; }
+
+    #main-photo {
+      max-width: 100%; max-height: 100%; object-fit: contain;
+      user-select: none; -webkit-user-drag: none;
+      transition: filter .3s ease, transform .3s ease;
+    }
+    #main-photo.preview {
+      filter: none;
+      transform: none;
+    }
+
+    #main-video {
+      display: none; max-width: 100%; max-height: 100%; object-fit: contain;
+    }
+
+    /* spinner */
+    #spinner {
+      display: none; position: absolute; z-index: 5;
+      width: 40px; height: 40px;
+      border: 3px solid rgba(255,255,255,.15); border-top-color: #fc3f1d;
+      border-radius: 50%; animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* nav arrows */
+    .nav-arrow {
+      position: absolute; top: 50%; transform: translateY(-50%);
+      background: rgba(0,0,0,.35); border: none; color: #fff;
+      font-size: 32px; width: 48px; height: 72px;
+      cursor: pointer; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s; z-index: 10;
+      touch-action: manipulation;
+    }
+    .nav-arrow:hover  { background: rgba(255,255,255,.18); }
+    .nav-arrow:active { background: rgba(255,255,255,.28); }
+    .nav-arrow:disabled { opacity: .12; pointer-events: none; }
+    #prev-btn { left: 8px; }
+    #next-btn { right: 8px; }
+
+    /* error */
+    #error-overlay {
+      display: none; position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%); color: #f66; font-size: 14px;
+      background: rgba(0,0,0,.7); padding: 10px 20px; border-radius: 8px;
+    }
+
+    /* thumbnail strip */
+    #thumb-strip {
+      position: absolute; bottom: 0; left: 0; right: 0; height: 116px;
+      background: linear-gradient(to top, rgba(0,0,0,.9) 60%, transparent 100%);
+      display: flex; align-items: center;
+      padding: 10px 8px 10px;
+      gap: 6px; overflow-x: auto; scroll-behavior: smooth;
+      transform: translateY(100%); transition: transform .25s ease;
+      -webkit-overflow-scrolling: touch;
+    }
+    /* Pinned mode: pushes photo area up */
+    #viewer.thumbs-open #thumb-strip { transform: translateY(0); }
+    #viewer.thumbs-open #photo-area  { padding-bottom: 116px; }
+
+    /* Hover mode: overlay only, no padding change */
+    #thumb-trigger:hover ~ #thumb-strip,
+    #thumb-strip:hover { transform: translateY(0); }
+
+    #thumb-trigger {
+      position: absolute; bottom: 0; left: 0; right: 0; height: 40px; z-index: 9;
+    }
+    #thumb-strip::-webkit-scrollbar { height: 3px; }
+    #thumb-strip::-webkit-scrollbar-thumb { background: #555; border-radius: 2px; }
+
+    .thumb {
+      position: relative;
+      width: 78px; height: 78px; flex-shrink: 0; cursor: pointer;
+      border: 2px solid transparent; border-radius: 5px; overflow: hidden;
+      opacity: .5; transition: opacity .15s, border-color .15s;
+      background: #1a1a1a; touch-action: manipulation;
+    }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .thumb.active { border-color: #fc3f1d; opacity: 1; }
+    .thumb:not(.active):hover, .thumb:not(.active):active { opacity: .8; }
+
+    .thumb-play {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 26px; height: 26px; border-radius: 50%;
+      background: rgba(0,0,0,.6);
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: none;
+    }
+    .thumb-play::after {
+      content: '▶'; font-size: 11px; color: #fff; margin-left: 2px;
+    }
+
+    /* mobile: smaller arrows, hide on very narrow screens */
+    @media (max-width: 480px) {
+      .nav-arrow { width: 36px; height: 56px; font-size: 24px; background: rgba(0,0,0,.25); }
+      #prev-btn { left: 4px; }
+      #next-btn { right: 4px; }
+      #photo-name { display: none; }   /* too cramped on small phones */
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Input screen ── -->
+<div id="input-screen">
+  <h2>Yandex Disk Album Viewer</h2>
+  <p>
+    Paste an album or item link:
+  </p>
+  <input id="album-input" type="text"
+    placeholder="https://disk.yandex.com/d/KEY/…"
+    autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+  <button id="load-btn">Open Album</button>
+  <div id="input-status"></div>
+</div>
+
+<!-- ── Gallery preview screen ── -->
+<div id="gallery">
+  <div id="gallery-topbar">
+    <span id="gallery-title">Album</span>
+    <span id="gallery-count"></span>
+    <button id="gallery-close-btn" title="Close">&#x2715;</button>
+  </div>
+  <div id="gallery-grid"></div>
+</div>
+
+<!-- ── Full-screen viewer ── -->
+<div id="viewer">
+  <div id="top-trigger"></div>
+  <div id="topbar">
+    <span id="photo-counter"></span>
+    <span id="photo-name"></span>
+    <button class="topbar-btn" id="fullscreen-btn" title="Toggle fullscreen">&#x26F6;</button>
+    <button class="topbar-btn" id="hires-btn" title="Toggle hi-res">&#10022;</button>
+    <button class="topbar-btn" id="thumbs-btn" title="Toggle thumbnails">&#9783;</button>
+    <button class="topbar-btn" id="close-btn" title="Close (Esc)">&#x2715;</button>
+  </div>
+
+  <div id="photo-area">
+    <div id="spinner"></div>
+    <img id="main-photo" src="" alt="">
+    <video id="main-video" controls playsinline></video>
+    <div id="error-overlay">Failed to load</div>
+    <button class="nav-arrow" id="prev-btn">&#8249;</button>
+    <button class="nav-arrow" id="next-btn">&#8250;</button>
+  </div>
+
+  <div id="thumb-trigger"></div>
+  <div id="thumb-strip"></div>
+</div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  let photos = [];   // [{name, path, preview, fullUrl}]
+  let currentIndex = 0;
+  let publicKey = '';
+  let albumKey = '';
+  let loadGen = 0;   // incremented on every showPhoto call; stale loads self-cancel
+  let fromGallery = false;  // whether the viewer was opened from the gallery
+  let hiRes = !window.matchMedia('(hover: none)').matches;  // default: on for desktop, off for mobile
+
+  // ── Elements ───────────────────────────────────────────────────────────────
+  const inputScreen  = document.getElementById('input-screen');
+  const albumInput   = document.getElementById('album-input');
+  const loadBtn      = document.getElementById('load-btn');
+  const inputStatus  = document.getElementById('input-status');
+  const gallery      = document.getElementById('gallery');
+  const galleryGrid  = document.getElementById('gallery-grid');
+  const galleryTitle = document.getElementById('gallery-title');
+  const galleryCount = document.getElementById('gallery-count');
+  const galleryCloseBtn = document.getElementById('gallery-close-btn');
+  const viewer       = document.getElementById('viewer');
+  const photoCounter = document.getElementById('photo-counter');
+  const photoName    = document.getElementById('photo-name');
+  const mainPhoto    = document.getElementById('main-photo');
+  const mainVideo    = document.getElementById('main-video');
+  const prevBtn      = document.getElementById('prev-btn');
+  const nextBtn      = document.getElementById('next-btn');
+  const thumbStrip   = document.getElementById('thumb-strip');
+  const spinner      = document.getElementById('spinner');
+  const closeBtn     = document.getElementById('close-btn');
+  const thumbsBtn    = document.getElementById('thumbs-btn');
+  const hiresBtn        = document.getElementById('hires-btn');
+  const fullscreenBtn   = document.getElementById('fullscreen-btn');
+  const errorOverlay    = document.getElementById('error-overlay');
+
+  // ── On load: check URL path ────────────────────────────────────────────────
+  window.addEventListener('DOMContentLoaded', () => {
+    const parts = location.pathname.split('/').filter(Boolean);
+    if (parts.length >= 1) {
+      const albumParam = decodeURIComponent(parts[0]);
+      const itemParam  = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : null;
+      if (itemParam) {
+        inputScreen.style.display = 'none';
+        openViewer();
+        spinner.style.display = 'block';
+      } else {
+        setInputStatus('Loading album\u2026');
+      }
+      parseAndLoad(albumParam, itemParam);
+    }
+  });
+
+  // ── Input helpers ──────────────────────────────────────────────────────────
+  function parseAndLoad(value, imageFile) {
+    value = value.trim();
+
+    // Yandex Disk URL
+    const urlMatch = value.match(/disk\.yandex\.\w+\/d\/([^/?#]+)|yadi\.sk\/d\/([^/?#]+)/);
+    if (urlMatch) {
+      albumKey = urlMatch[1] || urlMatch[2];
+      publicKey = `https://disk.yandex.com/d/${albumKey}`;
+      if (!imageFile) {
+        const remainder = value.slice(value.indexOf(albumKey) + albumKey.length);
+        if (remainder.startsWith('/') && remainder.length > 1)
+          imageFile = remainder.slice(1).split('?')[0].split('#')[0] || null;
+      }
+      loadAlbum(imageFile || null);
+      return;
+    }
+
+    // App URL (e.g. http://localhost:8000/KEY/file.jpg or https://yadisk-album-viewer.pages.dev/KEY/file.jpg)
+    try {
+      const url = new URL(value);
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (parts.length >= 1) {
+        albumKey = decodeURIComponent(parts[0]);
+        publicKey = `https://disk.yandex.com/d/${albumKey}`;
+        imageFile = imageFile || (parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : null);
+        loadAlbum(imageFile || null);
+        return;
+      }
+    } catch (_) {}
+
+    // Plain key
+    albumKey = value;
+    publicKey = `https://disk.yandex.com/d/${value}`;
+    loadAlbum(imageFile || null);
+  }
+
+  loadBtn.onclick = () => parseAndLoad(albumInput.value);
+  albumInput.addEventListener('keydown', e => { if (e.key === 'Enter') loadBtn.click(); });
+
+  // ── API ────────────────────────────────────────────────────────────────────
+  async function fetchPage(offset) {
+    const url = `https://cloud-api.yandex.net/v1/disk/public/resources`
+      + `?public_key=${encodeURIComponent(publicKey)}`
+      + `&limit=500&offset=${offset}`
+      + `&preview_size=1280x1280&preview_crop=false`
+      + `&fields=_embedded.items.name,_embedded.items.path,_embedded.items.type,`
+      + `_embedded.items.mime_type,_embedded.items.preview,_embedded.total`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+    return res.json();
+  }
+
+  async function fetchAllPhotos() {
+    let all = [], offset = 0;
+    while (true) {
+      const data  = await fetchPage(offset);
+      const embed = data._embedded;
+      if (!embed) break;
+      const imgs = embed.items.filter(i => i.type === 'file' && (i.mime_type?.startsWith('image/') || i.mime_type?.startsWith('video/')));
+      all = all.concat(imgs);
+      offset += embed.items.length;
+      if (offset >= embed.total || embed.items.length === 0) break;
+    }
+    return all;
+  }
+
+  async function getDownloadUrl(filePath) {
+    const url = `https://cloud-api.yandex.net/v1/disk/public/resources/download`
+      + `?public_key=${encodeURIComponent(publicKey)}`
+      + `&path=${encodeURIComponent(filePath)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Download API ${res.status}`);
+    return (await res.json()).href;
+  }
+
+  // ── Load album ─────────────────────────────────────────────────────────────
+  async function loadAlbum(openFile) {
+    setInputStatus('Loading album\u2026');
+    try {
+      const items = await fetchAllPhotos();
+      if (!items.length) { setInputStatus('No photos found in this album.'); return; }
+
+      photos = items.map(item => ({
+        name:      item.name,
+        path:      item.path,
+        preview:   item.preview || null,
+        fullUrl:   null,
+        mediaType: item.mime_type?.startsWith('video/') ? 'video' : 'image',
+      }));
+
+      setInputStatus('');
+      inputScreen.style.display = 'none';
+
+      if (openFile) {
+        // Direct link to a specific item — skip gallery, go straight to viewer
+        const decoded = decodeURIComponent(openFile);
+        const idx = photos.findIndex(p =>
+          p.name === decoded || p.name === openFile ||
+          p.path.endsWith('/' + decoded) || p.path.endsWith('/' + openFile)
+        );
+        fromGallery = true;
+        openViewer();
+        buildThumbs();
+        await showPhoto(idx >= 0 ? idx : 0);
+      } else {
+        // No specific item — show gallery preview
+        history.replaceState(null, '', '/' + albumKey);
+        showGallery();
+      }
+
+    } catch (err) {
+      setInputStatus('Error: ' + err.message);
+      console.error(err);
+    }
+  }
+
+  // ── Gallery ────────────────────────────────────────────────────────────────
+  function showGallery() {
+    viewer.classList.remove('active', 'thumbs-open');
+    thumbsBtn.classList.remove('on');
+    gallery.classList.add('active');
+
+    galleryTitle.textContent = albumKey;
+    galleryCount.textContent = `${photos.length} items`;
+
+    galleryGrid.innerHTML = '';
+    photos.forEach((photo, idx) => {
+      const tile = document.createElement('div');
+      tile.className = 'gallery-tile';
+      if (photo.preview) {
+        const img = document.createElement('img');
+        img.alt = photo.name;
+        img.loading = 'lazy';
+        img.onload = () => tile.classList.add('loaded');
+        img.src = photo.preview;
+        tile.appendChild(img);
+      } else {
+        tile.classList.add('loaded');  // no preview = nothing to wait for
+      }
+      if (photo.mediaType === 'video') {
+        const play = document.createElement('div');
+        play.className = 'gallery-tile-play';
+        tile.appendChild(play);
+      }
+      tile.onclick = () => openFromGallery(idx);
+      galleryGrid.appendChild(tile);
+    });
+  }
+
+  function openViewer() {
+    viewer.classList.add('active');
+    if (!isMobile) {
+      viewer.classList.add('thumbs-open');
+      thumbsBtn.classList.add('on');
+    }
+  }
+
+  function openFromGallery(idx) {
+    fromGallery = true;
+    gallery.classList.remove('active');
+    if (!thumbStrip.children.length) buildThumbs();
+    openViewer();
+    history.replaceState(null, '', '/' + albumKey + '/' + encodeURIComponent(photos[idx].name));
+    showPhoto(idx, { scrollThumbs: false });
+  }
+
+  function hideGallery() {
+    gallery.classList.remove('active');
+    photos = []; publicKey = ''; albumKey = ''; currentIndex = 0;
+    galleryGrid.innerHTML = '';
+    thumbStrip.innerHTML = '';
+    inputScreen.style.display = '';
+    history.replaceState(null, '', '/');
+  }
+
+  galleryCloseBtn.onclick = hideGallery;
+
+  // ── Viewer ─────────────────────────────────────────────────────────────────
+  function hideViewer() {
+    mainVideo.pause(); mainVideo.src = ''; mainVideo.style.display = 'none';
+    mainPhoto.src = '';
+    viewer.classList.remove('active', 'thumbs-open');
+    thumbsBtn.classList.remove('on');
+
+    if (fromGallery) {
+      fromGallery = false;
+      history.replaceState(null, '', '/' + albumKey);
+      showGallery();
+    } else {
+      photos = []; publicKey = ''; albumKey = ''; currentIndex = 0;
+      thumbStrip.innerHTML = '';
+      inputScreen.style.display = '';
+      history.replaceState(null, '', '/');
+    }
+  }
+
+  function buildThumbs() {
+    thumbStrip.innerHTML = '';
+    photos.forEach((photo, idx) => {
+      const div = document.createElement('div');
+      div.className = 'thumb';
+      if (photo.preview) {
+        const img = document.createElement('img');
+        img.src = photo.preview;
+        img.alt = photo.name;
+        div.appendChild(img);
+      }
+      if (photo.mediaType === 'video') {
+        const play = document.createElement('div');
+        play.className = 'thumb-play';
+        div.appendChild(play);
+      }
+      div.onclick = () => showPhoto(idx, { scrollThumbs: false });
+      thumbStrip.appendChild(div);
+    });
+  }
+
+  async function showPhoto(idx, { scrollThumbs = true } = {}) {
+    if (idx < 0 || idx >= photos.length) return;
+    const gen = ++loadGen;   // this call "owns" the viewer until a newer call arrives
+    currentIndex = idx;
+    updateUrl();
+
+    // UI state
+    photoCounter.textContent = `${idx + 1}\u2009/\u2009${photos.length}`;
+    photoName.textContent    = photos[idx].name;
+    prevBtn.disabled = (idx === 0);
+    nextBtn.disabled = (idx === photos.length - 1);
+
+    // Highlight active thumb & optionally scroll into view
+    Array.from(thumbStrip.children).forEach((el, i) => el.classList.toggle('active', i === idx));
+    if (scrollThumbs) {
+      thumbStrip.children[idx]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+
+    errorOverlay.style.display = 'none';
+
+    const isVideo = photos[idx].mediaType === 'video';
+    mainPhoto.style.display = isVideo ? 'none' : '';
+    mainVideo.style.display = isVideo ? 'block' : 'none';
+    if (!isVideo) mainVideo.pause();
+
+    spinner.style.display = 'block';
+
+    if (isVideo) {
+      // Video: fetch download URL and set as src
+      try {
+        if (!photos[idx].fullUrl) {
+          photos[idx].fullUrl = await getDownloadUrl(photos[idx].path);
+        }
+        if (gen !== loadGen) return;
+        mainVideo.src = photos[idx].fullUrl;
+      } catch (e) {
+        console.error('Failed to load video:', e);
+        if (gen === loadGen) errorOverlay.style.display = 'block';
+      } finally {
+        if (gen === loadGen) spinner.style.display = 'none';
+      }
+    } else {
+      // Image: show preview immediately, then swap to full-res if enabled
+      if (photos[idx].preview) {
+        mainPhoto.src = photos[idx].preview;
+        mainPhoto.classList.add('preview');
+      } else {
+        mainPhoto.classList.add('preview');
+      }
+
+      if (!hiRes) {
+        // Stay on preview
+        if (gen === loadGen) {
+          mainPhoto.classList.remove('preview');
+          spinner.style.display = 'none';
+        }
+      } else {
+        try {
+          if (!photos[idx].fullUrl) {
+            photos[idx].fullUrl = await getDownloadUrl(photos[idx].path);
+          }
+          if (gen !== loadGen) return;
+
+          const url = photos[idx].fullUrl;
+          await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload  = resolve;
+            img.onerror = reject;
+            img.src = url;
+          });
+          if (gen !== loadGen) return;
+
+          mainPhoto.src = url;
+        } catch (e) {
+          console.error('Failed to load photo:', e);
+          if (gen === loadGen) errorOverlay.style.display = 'block';
+        } finally {
+          if (gen === loadGen) {
+            mainPhoto.classList.remove('preview');
+            spinner.style.display = 'none';
+          }
+        }
+      }
+    }
+
+    // Prefetch adjacent photos in background (only when hi-res is on)
+    if (hiRes) {
+      prefetch(idx + 1);
+      prefetch(idx - 1);
+    }
+  }
+
+  async function prefetch(idx) {
+    if (idx < 0 || idx >= photos.length || photos[idx].fullUrl) return;
+    try { photos[idx].fullUrl = await getDownloadUrl(photos[idx].path); } catch (_) {}
+  }
+
+  // ── Hi-res toggle ──────────────────────────────────────────────────────────
+  hiresBtn.classList.toggle('on', hiRes);
+  hiresBtn.onclick = () => {
+    hiRes = !hiRes;
+    hiresBtn.classList.toggle('on', hiRes);
+    if (hiRes) showPhoto(currentIndex);  // reload current photo at full res
+  };
+
+  // ── Fullscreen toggle ──────────────────────────────────────────────────────
+  const isMobile = window.matchMedia('(hover: none)').matches;
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const isStandalone = !!navigator.standalone;
+  const fullscreenSupported = !!document.documentElement.requestFullscreen;
+  if (isIOS || !fullscreenSupported) {
+    fullscreenBtn.style.display = 'none';
+  } else {
+    if (isMobile) document.documentElement.requestFullscreen();
+
+    function updateFullscreenBtn() {
+      fullscreenBtn.classList.toggle('on', !!document.fullscreenElement);
+    }
+    document.addEventListener('fullscreenchange', updateFullscreenBtn);
+    updateFullscreenBtn();
+
+    fullscreenBtn.onclick = () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen();
+    };
+  }
+
+  // ── Navigation ─────────────────────────────────────────────────────────────
+  prevBtn.onclick  = () => showPhoto(currentIndex - 1);
+  nextBtn.onclick  = () => showPhoto(currentIndex + 1);
+  closeBtn.onclick = hideViewer;
+
+  thumbsBtn.onclick = () => {
+    const open = viewer.classList.toggle('thumbs-open');
+    thumbsBtn.classList.toggle('on', open);
+    if (open) {
+      setTimeout(() => {
+        thumbStrip.children[currentIndex]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+      }, 260);
+    }
+  };
+
+  // keyboard
+  document.addEventListener('keydown', e => {
+    if (viewer.classList.contains('active')) {
+      if      (e.key === 'ArrowLeft')  showPhoto(currentIndex - 1);
+      else if (e.key === 'ArrowRight') showPhoto(currentIndex + 1);
+      else if (e.key === 'Escape')     hideViewer();
+    } else if (gallery.classList.contains('active')) {
+      if (e.key === 'Escape') hideGallery();
+    }
+  });
+
+  // touch swipe (only on the main photo area, not the thumbnail strip)
+  let touchStartX = 0;
+  const photoArea = document.getElementById('photo-area');
+  photoArea.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, { passive: true });
+  photoArea.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 50) showPhoto(currentIndex + (dx < 0 ? 1 : -1));
+  }, { passive: true });
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function setInputStatus(msg) { inputStatus.textContent = msg; }
+
+  function updateUrl() {
+    if (!albumKey || !photos.length) return;
+    const name = encodeURIComponent(photos[currentIndex].name);
+    history.replaceState(null, '', '/' + albumKey + '/' + name);
+  }
+</script>
+</body>
+</html>
