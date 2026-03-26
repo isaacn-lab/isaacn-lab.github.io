@@ -396,7 +396,7 @@
       + `?public_key=${encodeURIComponent(publicKey)}`
       + `&limit=500&offset=${offset}`
       + `&preview_size=1280x1280&preview_crop=false`
-      + `&fields=_embedded.items.name,_embedded.items.path,_embedded.items.type,`
+      + `&fields=name,_embedded.items.name,_embedded.items.path,_embedded.items.type,`
       + `_embedded.items.mime_type,_embedded.items.preview,_embedded.total`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
@@ -404,9 +404,10 @@
   }
 
   async function fetchAllPhotos() {
-    let all = [], offset = 0;
+    let all = [], offset = 0, albumName = null;
     while (true) {
       const data  = await fetchPage(offset);
+      if (albumName === null) albumName = data.name || null;
       const embed = data._embedded;
       if (!embed) break;
       const imgs = embed.items.filter(i => i.type === 'file' && (i.mime_type?.startsWith('image/') || i.mime_type?.startsWith('video/')));
@@ -414,7 +415,7 @@
       offset += embed.items.length;
       if (offset >= embed.total || embed.items.length === 0) break;
     }
-    return all;
+    return { items: all, albumName };
   }
 
   async function getDownloadUrl(filePath) {
@@ -430,8 +431,10 @@
   async function loadAlbum(openFile) {
     setInputStatus('Loading album\u2026');
     try {
-      const items = await fetchAllPhotos();
+      const { items, albumName } = await fetchAllPhotos();
       if (!items.length) { setInputStatus('No photos found in this album.'); return; }
+
+      if (albumName) document.title = albumName;
 
       photos = items.map(item => ({
         name:      item.name,
@@ -523,6 +526,7 @@
     galleryGrid.innerHTML = '';
     thumbStrip.innerHTML = '';
     inputScreen.style.display = '';
+    document.title = 'Yandex Disk Album Viewer';
     history.replaceState(null, '', location.pathname);
   }
 
@@ -543,6 +547,7 @@
       photos = []; publicKey = ''; albumKey = ''; currentIndex = 0;
       thumbStrip.innerHTML = '';
       inputScreen.style.display = '';
+      document.title = 'Yandex Disk Album Viewer';
       history.replaceState(null, '', location.pathname);
     }
   }
