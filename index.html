@@ -276,6 +276,7 @@
   <div id="topbar">
     <span id="photo-counter"></span>
     <span id="photo-name"></span>
+    <a id="yadisk-btn" class="topbar-btn" target="_blank" rel="noopener" title="Open in Yandex Disk to adjust quality" style="display:none">&#x29C9;</a>
     <button class="topbar-btn" id="fullscreen-btn" title="Toggle fullscreen">&#x26F6;</button>
     <button class="topbar-btn" id="hires-btn" title="Toggle hi-res">&#10022;</button>
     <button class="topbar-btn" id="thumbs-btn" title="Toggle thumbnails">&#9783;</button>
@@ -326,6 +327,7 @@
   const spinner      = document.getElementById('spinner');
   const closeBtn     = document.getElementById('close-btn');
   const thumbsBtn    = document.getElementById('thumbs-btn');
+  const yadiskBtn       = document.getElementById('yadisk-btn');
   const hiresBtn        = document.getElementById('hires-btn');
   const fullscreenBtn   = document.getElementById('fullscreen-btn');
   const errorOverlay    = document.getElementById('error-overlay');
@@ -597,6 +599,9 @@
     mainPhoto.style.display = isVideo ? 'none' : '';
     mainVideo.style.display = isVideo ? 'block' : 'none';
     if (!isVideo) mainVideo.pause();
+
+    yadiskBtn.style.display = isVideo ? '' : 'none';
+    if (isVideo) yadiskBtn.href = `https://disk.yandex.com/d/${albumKey}/${encodeURIComponent(photos[idx].path)}`;
 
     spinner.style.display = 'block';
 
