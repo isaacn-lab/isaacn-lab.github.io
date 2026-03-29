@@ -339,8 +339,7 @@
   const photoCounter = document.getElementById('photo-counter');
   const photoName    = document.getElementById('photo-name');
   const mainPhoto    = document.getElementById('main-photo');
-  const mainVideo    = document.getElementById('main-video');
-  const prevBtn      = document.getElementById('prev-btn');
+const prevBtn      = document.getElementById('prev-btn');
   const nextBtn      = document.getElementById('next-btn');
   const thumbStrip   = document.getElementById('thumb-strip');
   const spinner      = document.getElementById('spinner');
@@ -412,60 +411,97 @@
   albumInput.addEventListener('keydown', e => { if (e.key === 'Enter') loadBtn.click(); });
 
   // ── Video / HLS / Plyr helpers ─────────────────────────────────────────────
-  const WANTED_HEIGHTS = [1080, 720, 360];
+  // 0 = Original (direct download), -1 = Auto, positive = height in px
 
   function destroyVideo() {
     if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
     if (plyrInstance) { plyrInstance.destroy(); plyrInstance = null; }
+    // Plyr removes the <video> element on destroy — recreate it
+    const v = document.createElement('video');
+    v.id = 'main-video';
+    v.setAttribute('playsinline', '');
+    videoWrapper.innerHTML = '';
+    videoWrapper.appendChild(v);
   }
 
-  // 0 is the sentinel value for "Original" (direct download); -1 = Auto; positive = height in px
-  function initPlyr(qualityOptions) {
-    const options = {
+  // levels: sorted array of heights from HLS manifest, or null for original-only
+  function initPlyr(levels) {
+    const video = document.getElementById('main-video');
+    plyrInstance = new Plyr(video, {
       controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'settings', 'fullscreen'],
       settings: ['quality'],
       quality: {
-        default: qualityOptions ? -1 : 0,
-        options: qualityOptions ? [-1, ...qualityOptions, 0] : [0],
+        default: levels ? -1 : 0,
+        options: levels ? [-1, ...levels, 0] : [0],
         forced: true,
         onChange: onQualityChange,
       },
       i18n: { qualityLabel: { '-1': 'Auto', '0': 'Original' } },
-    };
-    plyrInstance = new Plyr(mainVideo, options);
+    });
   }
 
   async function onQualityChange(quality) {
+    quality = Number(quality);
+    const photo = photos[currentIndex];
+
     if (quality === 0) {
-      // Original: switch to direct download URL
+      // Switch to direct download — tear down HLS
       if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-      const photo = photos[currentIndex];
       if (!photo.fullUrl) photo.fullUrl = await getDownloadUrl(photo.path);
+      const video = document.getElementById('main-video');
       const currentTime = plyrInstance?.currentTime || 0;
-      mainVideo.src = photo.fullUrl;
-      mainVideo.currentTime = currentTime;
-      mainVideo.play().catch(() => {});
-    } else if (quality === -1) {
-      if (hlsInstance) hlsInstance.currentLevel = -1;
+      video.src = photo.fullUrl;
+      video.currentTime = currentTime;
+      plyrInstance?.play();
     } else {
-      if (hlsInstance) hlsInstance.currentLevel =
-        hlsInstance.levels.reduce((best, l, i) =>
+      // Switching to HLS level — re-attach HLS if it was torn down (was on Original)
+      if (!hlsInstance) {
+        const streamUrl = await getVideoStreamUrl(photo);
+        if (!streamUrl) return;
+        const video = document.getElementById('main-video');
+        const currentTime = plyrInstance?.currentTime || 0;
+        const hls = new Hls();
+        hlsInstance = hls;
+        hls.loadSource(streamUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          hls.currentLevel = quality === -1 ? -1
+            : hls.levels.reduce((best, l, i) =>
+                Math.abs(l.height - quality) < Math.abs(hls.levels[best].height - quality) ? i : best, 0);
+          video.currentTime = currentTime;
+          plyrInstance?.play();
+        });
+      } else if (quality === -1) {
+        hlsInstance.currentLevel = -1;
+      } else {
+        hlsInstance.currentLevel = hlsInstance.levels.reduce((best, l, i) =>
           Math.abs(l.height - quality) < Math.abs(hlsInstance.levels[best].height - quality) ? i : best, 0);
+      }
     }
   }
 
-  async function getVideoStreamUrl(photoEntry) {
+  async function prefetchVideo(photo) {
+    await fetchAndCacheStreamMeta(photo);
+  }
+
+  async function getVideoStreamUrl(photo) {
+    if (photo.streamUrl !== null) return photo.streamUrl || null;
+    await fetchAndCacheStreamMeta(photo);
+    return photo.streamUrl || null;
+  }
+
+  async function fetchAndCacheStreamMeta(photo) {
     try {
       const metaRes = await fetch(
         `https://cloud-api.yandex.net/v1/disk/public/resources`
         + `?public_key=${encodeURIComponent(publicKey)}`
-        + `&path=${encodeURIComponent(photoEntry.path)}`
+        + `&path=${encodeURIComponent(photo.path)}`
         + `&fields=public_url`
       );
-      if (!metaRes.ok) return null;
+      if (!metaRes.ok) { photo.streamUrl = false; photo.hlsLevels = false; return; }
       const { public_url } = await metaRes.json();
       const itemHash = public_url?.match(/\/i\/([^/?#]+)/)?.[1];
-      if (!itemHash) return null;
+      if (!itemHash) { photo.streamUrl = false; photo.hlsLevels = false; return; }
 
       const pageUrl = `https://disk.yandex.com/i/${itemHash}`;
       const controller = new AbortController();
@@ -474,47 +510,59 @@
       try {
         const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(pageUrl)}`, { signal: controller.signal });
         clearTimeout(timer);
-        if (!res.ok) return null;
+        if (!res.ok) { photo.streamUrl = false; photo.hlsLevels = false; return; }
         html = await res.text();
       } catch {
         clearTimeout(timer);
-        return null;
+        photo.streamUrl = false; photo.hlsLevels = false; return;
       }
 
       const keyIdx = html.indexOf('"videos":');
-      if (keyIdx === -1) return null;
+      if (keyIdx === -1) { photo.streamUrl = false; photo.hlsLevels = false; return; }
       const arrStart = html.indexOf('[', keyIdx);
       let depth = 0, arrEnd = -1;
       for (let i = arrStart; i < html.length; i++) {
         if (html[i] === '[') depth++;
         else if (html[i] === ']') { if (--depth === 0) { arrEnd = i; break; } }
       }
-      if (arrEnd === -1) return null;
+      if (arrEnd === -1) { photo.streamUrl = false; photo.hlsLevels = false; return; }
+
       const videos = JSON.parse(html.substring(arrStart, arrEnd + 1));
       const adaptive = videos.find(v => v.dimension === 'adaptive');
-      return adaptive?.url || videos.find(v => v.url?.includes('.m3u8'))?.url || null;
+      photo.streamUrl = adaptive?.url || videos.find(v => v.url?.includes('.m3u8'))?.url || false;
+
+      // Parse quality levels from the per-dimension entries
+      const allowed = [1080, 720, 360];
+      const levels = videos
+        .map(v => parseInt(v.dimension))
+        .filter(h => allowed.includes(h))
+        .sort((a, b) => b - a);
+      photo.hlsLevels = levels.length ? levels : false;
     } catch {
-      return null;
+      photo.streamUrl = false; photo.hlsLevels = false;
     }
   }
 
-  function setupHlsVideo(url) {
+  function setupHlsVideo(url, cachedLevels) {
     if (typeof Hls === 'undefined') return false;
+    const video = document.getElementById('main-video');
     if (Hls.isSupported()) {
       const hls = new Hls();
       hlsInstance = hls;
       hls.loadSource(url);
-      hls.attachMedia(mainVideo);
+      hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
-        // Build the list of quality options from available levels (filtered to wanted heights + original)
-        const available = WANTED_HEIGHTS.filter(h => data.levels.some(l => l.height > 0));
-        initPlyr(available);
-        plyrInstance.on('qualitychange', e => onQualityChange(e.detail.quality));
+        hls.currentLevel = -1;
+        // Use cached levels if available, otherwise derive from manifest
+        const allowed = [1080, 720, 360];
+        const levels = cachedLevels || [...new Set(data.levels.map(l => l.height).filter(h => allowed.includes(h)))].sort((a, b) => b - a);
+        initPlyr(levels);
+        plyrInstance.quality = -1;
       });
       return true;
-    } else if (mainVideo.canPlayType('application/vnd.apple.mpegurl')) {
-      mainVideo.src = url;
-      initPlyr(null);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url;
+      initPlyr(cachedLevels || false);
       return true;
     }
     return false;
@@ -571,11 +619,16 @@
         path:      item.path,
         preview:   item.preview || null,
         fullUrl:   null,
+        streamUrl: null,   // adaptive m3u8; null = pending, false = unavailable
+        hlsLevels: null,   // sorted height[] from manifest; null = pending, false = unavailable
         mediaType: item.mime_type?.startsWith('video/') ? 'video' : 'image',
       }));
 
       setInputStatus('');
       inputScreen.style.display = 'none';
+
+      // Prefetch stream URL + HLS manifest levels for all videos in background
+      photos.forEach(photo => { if (photo.mediaType === 'video') prefetchVideo(photo); });
 
       if (openFile) {
         // Direct link to a specific item — skip gallery, go straight to viewer
@@ -664,7 +717,7 @@
 
   // ── Viewer ─────────────────────────────────────────────────────────────────
   function hideViewer() {
-    mainVideo.pause(); destroyVideo(); mainVideo.src = ''; videoWrapper.style.display = 'none';
+    document.getElementById('main-video')?.pause(); destroyVideo(); videoWrapper.style.display = 'none';
     mainPhoto.src = '';
     viewer.classList.remove('active', 'thumbs-open');
     thumbsBtn.classList.remove('on');
@@ -726,7 +779,7 @@
     const isVideo = photos[idx].mediaType === 'video';
     mainPhoto.style.display = isVideo ? 'none' : '';
     videoWrapper.style.display = isVideo ? 'block' : 'none';
-    if (!isVideo) { mainVideo.pause(); destroyVideo(); }
+    if (!isVideo) { document.getElementById('main-video')?.pause(); destroyVideo(); }
 
     spinner.style.display = 'block';
 
@@ -737,15 +790,15 @@
         const streamUrl = await getVideoStreamUrl(photos[idx]);
         if (gen !== loadGen) return;
 
-        if (streamUrl && setupHlsVideo(streamUrl)) {
+        if (streamUrl && setupHlsVideo(streamUrl, photos[idx].hlsLevels || null)) {
           // hls.js — Plyr + quality selector populated in MANIFEST_PARSED
         } else {
           if (!photos[idx].fullUrl) {
             photos[idx].fullUrl = await getDownloadUrl(photos[idx].path);
           }
           if (gen !== loadGen) return;
-          mainVideo.src = photos[idx].fullUrl;
-          initPlyr(null);  // original-only fallback
+          document.getElementById('main-video').src = photos[idx].fullUrl;
+          initPlyr(false);
         }
       } catch (e) {
         console.error('Failed to load video:', e);
