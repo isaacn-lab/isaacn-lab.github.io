@@ -936,8 +936,9 @@ const prevBtn      = document.getElementById('prev-btn');
   // keyboard
   document.addEventListener('keydown', e => {
     if (viewer.classList.contains('active')) {
-      if      (e.key === 'ArrowLeft')  showPhoto(currentIndex - 1);
-      else if (e.key === 'ArrowRight') showPhoto(currentIndex + 1);
+      const videoPlaying = plyrInstance && !plyrInstance.paused;
+      if      (e.key === 'ArrowLeft')  { if (!videoPlaying) showPhoto(currentIndex - 1); }
+      else if (e.key === 'ArrowRight') { if (!videoPlaying) showPhoto(currentIndex + 1); }
       else if (e.key === 'Escape')     hideViewer();
     } else if (gallery.classList.contains('active')) {
       if (e.key === 'Escape') hideGallery();
@@ -950,7 +951,8 @@ const prevBtn      = document.getElementById('prev-btn');
   photoArea.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, { passive: true });
   photoArea.addEventListener('touchend', e => {
     const dx = e.changedTouches[0].clientX - touchStartX;
-    if (Math.abs(dx) > 50) showPhoto(currentIndex + (dx < 0 ? 1 : -1));
+    const videoPlaying = plyrInstance && !plyrInstance.paused;
+    if (Math.abs(dx) > 50 && !videoPlaying) showPhoto(currentIndex + (dx < 0 ? 1 : -1));
   }, { passive: true });
 
   // ── Helpers ────────────────────────────────────────────────────────────────
