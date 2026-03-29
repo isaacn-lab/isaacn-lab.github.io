@@ -460,6 +460,17 @@ const prevBtn      = document.getElementById('prev-btn');
       video.src = photo.fullUrl;
       video.currentTime = currentTime;
       plyrInstance?.play();
+    } else if (!Hls.isSupported()) {
+      // iOS native HLS — browser handles quality adaptively; restore stream URL if coming from Original
+      const streamUrl = await getVideoStreamUrl(photo);
+      if (!streamUrl) return;
+      const video = document.getElementById('main-video');
+      if (video.src !== streamUrl) {
+        const currentTime = plyrInstance?.currentTime || 0;
+        video.src = streamUrl;
+        video.currentTime = currentTime;
+        plyrInstance?.play();
+      }
     } else {
       // Switching to HLS level — re-attach HLS if it was torn down (was on Original)
       if (!hlsInstance) {
