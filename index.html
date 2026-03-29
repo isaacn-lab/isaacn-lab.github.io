@@ -458,8 +458,11 @@ const prevBtn      = document.getElementById('prev-btn');
       const video = document.getElementById('main-video');
       const currentTime = plyrInstance?.currentTime || 0;
       video.src = photo.fullUrl;
-      video.currentTime = currentTime;
-      plyrInstance?.play();
+      video.addEventListener('canplay', () => {
+        video.currentTime = currentTime;
+        plyrInstance?.play();
+      }, { once: true });
+      if (isIOS) video.load();
     } else if (!Hls.isSupported()) {
       // iOS native HLS — browser handles quality adaptively; restore stream URL if coming from Original
       const streamUrl = await getVideoStreamUrl(photo);
@@ -468,8 +471,11 @@ const prevBtn      = document.getElementById('prev-btn');
       if (video.src !== streamUrl) {
         const currentTime = plyrInstance?.currentTime || 0;
         video.src = streamUrl;
-        video.currentTime = currentTime;
-        plyrInstance?.play();
+        video.addEventListener('canplay', () => {
+          video.currentTime = currentTime;
+          plyrInstance?.play();
+        }, { once: true });
+        video.load();
       }
     } else {
       // Switching to HLS level — re-attach HLS if it was torn down (was on Original)
@@ -581,6 +587,7 @@ const prevBtn      = document.getElementById('prev-btn');
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = url;
       initPlyr(cachedLevels || false);
+      plyrInstance.quality = -1;
       return true;
     }
     return false;
