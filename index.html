@@ -426,14 +426,16 @@ const prevBtn      = document.getElementById('prev-btn');
   }
 
   // levels: sorted array of heights from HLS manifest, or null for original-only
-  function initPlyr(levels) {
+  function initPlyr(levels, hasOriginal = true) {
     const video = document.getElementById('main-video');
     plyrInstance = new Plyr(video, {
       controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'settings', 'fullscreen'],
       settings: ['quality'],
       quality: {
         default: levels ? -1 : 0,
-        options: levels ? [-1, ...levels, 0] : [0],
+        options: levels
+          ? (hasOriginal ? [-1, ...levels, 0] : [-1, ...levels])
+          : (hasOriginal ? [0] : [-1]),
         forced: true,
         onChange: onQualityChange,
       },
@@ -452,7 +454,7 @@ const prevBtn      = document.getElementById('prev-btn');
     const photo = photos[currentIndex];
 
     if (quality === 0) {
-      // Switch to direct download — tear down HLS
+      // Switch to direct download — tear down HLS (desktop only; iOS never shows this option)
       if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
       if (!photo.fullUrl) photo.fullUrl = await getDownloadUrl(photo.path);
       const video = document.getElementById('main-video');
@@ -462,21 +464,8 @@ const prevBtn      = document.getElementById('prev-btn');
         video.currentTime = currentTime;
         plyrInstance?.play();
       }, { once: true });
-      if (isIOS) video.load();
     } else if (!Hls.isSupported()) {
-      // iOS native HLS — browser handles quality adaptively; restore stream URL if coming from Original
-      const streamUrl = await getVideoStreamUrl(photo);
-      if (!streamUrl) return;
-      const video = document.getElementById('main-video');
-      if (video.src !== streamUrl) {
-        const currentTime = plyrInstance?.currentTime || 0;
-        video.src = streamUrl;
-        video.addEventListener('canplay', () => {
-          video.currentTime = currentTime;
-          plyrInstance?.play();
-        }, { once: true });
-        video.load();
-      }
+      // iOS native HLS — quality levels are advisory only (browser adapts automatically); no-op
     } else {
       // Switching to HLS level — re-attach HLS if it was torn down (was on Original)
       if (!hlsInstance) {
@@ -586,7 +575,7 @@ const prevBtn      = document.getElementById('prev-btn');
       return true;
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = url;
-      initPlyr(cachedLevels || false);
+      initPlyr(cachedLevels || false, false); // no Original on iOS — direct download breaks native HLS player
       plyrInstance.quality = -1;
       return true;
     }
