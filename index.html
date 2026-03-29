@@ -220,13 +220,14 @@
     #viewer.thumbs-open #thumb-strip { transform: translateY(0); }
     #viewer.thumbs-open #photo-area  { padding-bottom: 116px; }
 
-    /* Hover mode: overlay only, no padding change */
-    #thumb-trigger:hover ~ #thumb-strip,
-    #thumb-strip:hover { transform: translateY(0); }
+    /* Hover mode: overlay only, no padding change — disabled when viewing video */
+    #viewer:not(.viewing-video) #thumb-trigger:hover ~ #thumb-strip,
+    #viewer:not(.viewing-video) #thumb-strip:hover { transform: translateY(0); }
 
     #thumb-trigger {
       position: absolute; bottom: 0; left: 0; right: 0; height: 40px; z-index: 9;
     }
+    #viewer.viewing-video #thumb-trigger { pointer-events: none; }
     #thumb-strip::-webkit-scrollbar { height: 3px; }
     #thumb-strip::-webkit-scrollbar-thumb { background: #555; border-radius: 2px; }
 
@@ -777,6 +778,7 @@ const prevBtn      = document.getElementById('prev-btn');
     errorOverlay.style.display = 'none';
 
     const isVideo = photos[idx].mediaType === 'video';
+    viewer.classList.toggle('viewing-video', isVideo);
     mainPhoto.style.display = isVideo ? 'none' : '';
     videoWrapper.style.display = isVideo ? 'block' : 'none';
     if (!isVideo) { document.getElementById('main-video')?.pause(); destroyVideo(); }
