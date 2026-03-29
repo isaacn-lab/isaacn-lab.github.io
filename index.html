@@ -8,6 +8,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <title>Yandex Disk Album Viewer</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23111'/><rect x='4' y='9' width='24' height='16' rx='3' fill='none' stroke='%23fc3f1d' stroke-width='2'/><circle cx='16' cy='17' r='4.5' fill='none' stroke='%23fc3f1d' stroke-width='2'/><rect x='11' y='6' width='6' height='4' rx='1.5' fill='%23fc3f1d'/></svg>">
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/plyr@3/dist/plyr.css">
+  <script src="https://cdn.jsdelivr.net/npm/plyr@3/dist/plyr.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #111; color: #fff; font-family: Arial, sans-serif; height: 100dvh; overflow: hidden; }
@@ -131,6 +134,12 @@
     #thumbs-btn.on    { color: #fc3f1d; }
     #hires-btn.on     { color: #fc3f1d; }
     #fullscreen-btn.on { color: #fc3f1d; }
+    #quality-select {
+      display: none; background: rgba(255,255,255,.08); border: 1px solid #555;
+      color: #bbb; border-radius: 6px; padding: 4px 6px; font-size: 13px;
+      cursor: pointer; -webkit-appearance: none; appearance: none; flex-shrink: 0;
+    }
+    #quality-select:hover { background: rgba(255,255,255,.18); }
     #close-btn { font-size: 20px; }
 
     /* main photo area */
@@ -154,9 +163,16 @@
       transform: none;
     }
 
-    #main-video {
-      display: none; max-width: 100%; max-height: 100%; object-fit: contain;
+    #video-wrapper {
+      display: none; width: 100%; height: 100%;
     }
+    #video-wrapper .plyr {
+      width: 100%; height: 100%;
+    }
+    #video-wrapper .plyr video {
+      object-fit: contain;
+    }
+    #main-video { width: 100%; height: 100%; }
 
     /* spinner */
     #spinner {
@@ -278,14 +294,16 @@
     <span id="photo-name"></span>
     <button class="topbar-btn" id="fullscreen-btn" title="Toggle fullscreen">&#x26F6;</button>
     <button class="topbar-btn" id="hires-btn" title="Toggle hi-res">&#10022;</button>
-    <button class="topbar-btn" id="thumbs-btn" title="Toggle thumbnails">&#9783;</button>
+<button class="topbar-btn" id="thumbs-btn" title="Toggle thumbnails">&#9783;</button>
     <button class="topbar-btn" id="close-btn" title="Close (Esc)">&#x2715;</button>
   </div>
 
   <div id="photo-area">
     <div id="spinner"></div>
     <img id="main-photo" src="" alt="">
-    <video id="main-video" controls playsinline></video>
+    <div id="video-wrapper">
+      <video id="main-video" playsinline></video>
+    </div>
     <div id="error-overlay">Failed to load</div>
     <button class="nav-arrow" id="prev-btn">&#8249;</button>
     <button class="nav-arrow" id="next-btn">&#8250;</button>
@@ -304,6 +322,8 @@
   let loadGen = 0;   // incremented on every showPhoto call; stale loads self-cancel
   let fromGallery = false;  // whether the viewer was opened from the gallery
   let hiRes = !window.matchMedia('(hover: none)').matches;  // default: on for desktop, off for mobile
+  let hlsInstance = null;
+  let plyrInstance = null;
 
   // ── Elements ───────────────────────────────────────────────────────────────
   const inputScreen  = document.getElementById('input-screen');
@@ -329,6 +349,7 @@
   const hiresBtn        = document.getElementById('hires-btn');
   const fullscreenBtn   = document.getElementById('fullscreen-btn');
   const errorOverlay    = document.getElementById('error-overlay');
+  const videoWrapper    = document.getElementById('video-wrapper');
 
   // ── On load: check URL hash ────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', () => {
@@ -389,6 +410,115 @@
 
   loadBtn.onclick = () => parseAndLoad(albumInput.value);
   albumInput.addEventListener('keydown', e => { if (e.key === 'Enter') loadBtn.click(); });
+
+  // ── Video / HLS / Plyr helpers ─────────────────────────────────────────────
+  const WANTED_HEIGHTS = [1080, 720, 360];
+
+  function destroyVideo() {
+    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+    if (plyrInstance) { plyrInstance.destroy(); plyrInstance = null; }
+  }
+
+  // 0 is the sentinel value for "Original" (direct download); -1 = Auto; positive = height in px
+  function initPlyr(qualityOptions) {
+    const options = {
+      controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'settings', 'fullscreen'],
+      settings: ['quality'],
+      quality: {
+        default: qualityOptions ? -1 : 0,
+        options: qualityOptions ? [-1, ...qualityOptions, 0] : [0],
+        forced: true,
+        onChange: onQualityChange,
+      },
+      i18n: { qualityLabel: { '-1': 'Auto', '0': 'Original' } },
+    };
+    plyrInstance = new Plyr(mainVideo, options);
+  }
+
+  async function onQualityChange(quality) {
+    if (quality === 0) {
+      // Original: switch to direct download URL
+      if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+      const photo = photos[currentIndex];
+      if (!photo.fullUrl) photo.fullUrl = await getDownloadUrl(photo.path);
+      const currentTime = plyrInstance?.currentTime || 0;
+      mainVideo.src = photo.fullUrl;
+      mainVideo.currentTime = currentTime;
+      mainVideo.play().catch(() => {});
+    } else if (quality === -1) {
+      if (hlsInstance) hlsInstance.currentLevel = -1;
+    } else {
+      if (hlsInstance) hlsInstance.currentLevel =
+        hlsInstance.levels.reduce((best, l, i) =>
+          Math.abs(l.height - quality) < Math.abs(hlsInstance.levels[best].height - quality) ? i : best, 0);
+    }
+  }
+
+  async function getVideoStreamUrl(photoEntry) {
+    try {
+      const metaRes = await fetch(
+        `https://cloud-api.yandex.net/v1/disk/public/resources`
+        + `?public_key=${encodeURIComponent(publicKey)}`
+        + `&path=${encodeURIComponent(photoEntry.path)}`
+        + `&fields=public_url`
+      );
+      if (!metaRes.ok) return null;
+      const { public_url } = await metaRes.json();
+      const itemHash = public_url?.match(/\/i\/([^/?#]+)/)?.[1];
+      if (!itemHash) return null;
+
+      const pageUrl = `https://disk.yandex.com/i/${itemHash}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      let html;
+      try {
+        const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(pageUrl)}`, { signal: controller.signal });
+        clearTimeout(timer);
+        if (!res.ok) return null;
+        html = await res.text();
+      } catch {
+        clearTimeout(timer);
+        return null;
+      }
+
+      const keyIdx = html.indexOf('"videos":');
+      if (keyIdx === -1) return null;
+      const arrStart = html.indexOf('[', keyIdx);
+      let depth = 0, arrEnd = -1;
+      for (let i = arrStart; i < html.length; i++) {
+        if (html[i] === '[') depth++;
+        else if (html[i] === ']') { if (--depth === 0) { arrEnd = i; break; } }
+      }
+      if (arrEnd === -1) return null;
+      const videos = JSON.parse(html.substring(arrStart, arrEnd + 1));
+      const adaptive = videos.find(v => v.dimension === 'adaptive');
+      return adaptive?.url || videos.find(v => v.url?.includes('.m3u8'))?.url || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function setupHlsVideo(url) {
+    if (typeof Hls === 'undefined') return false;
+    if (Hls.isSupported()) {
+      const hls = new Hls();
+      hlsInstance = hls;
+      hls.loadSource(url);
+      hls.attachMedia(mainVideo);
+      hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
+        // Build the list of quality options from available levels (filtered to wanted heights + original)
+        const available = WANTED_HEIGHTS.filter(h => data.levels.some(l => l.height > 0));
+        initPlyr(available);
+        plyrInstance.on('qualitychange', e => onQualityChange(e.detail.quality));
+      });
+      return true;
+    } else if (mainVideo.canPlayType('application/vnd.apple.mpegurl')) {
+      mainVideo.src = url;
+      initPlyr(null);
+      return true;
+    }
+    return false;
+  }
 
   // ── API ────────────────────────────────────────────────────────────────────
   async function fetchPage(offset) {
@@ -534,7 +664,7 @@
 
   // ── Viewer ─────────────────────────────────────────────────────────────────
   function hideViewer() {
-    mainVideo.pause(); mainVideo.src = ''; mainVideo.style.display = 'none';
+    mainVideo.pause(); destroyVideo(); mainVideo.src = ''; videoWrapper.style.display = 'none';
     mainPhoto.src = '';
     viewer.classList.remove('active', 'thumbs-open');
     thumbsBtn.classList.remove('on');
@@ -595,19 +725,28 @@
 
     const isVideo = photos[idx].mediaType === 'video';
     mainPhoto.style.display = isVideo ? 'none' : '';
-    mainVideo.style.display = isVideo ? 'block' : 'none';
-    if (!isVideo) mainVideo.pause();
+    videoWrapper.style.display = isVideo ? 'block' : 'none';
+    if (!isVideo) { mainVideo.pause(); destroyVideo(); }
 
     spinner.style.display = 'block';
 
     if (isVideo) {
-      // Video: fetch download URL and set as src
+      destroyVideo();
       try {
-        if (!photos[idx].fullUrl) {
-          photos[idx].fullUrl = await getDownloadUrl(photos[idx].path);
-        }
+        // Try HLS streaming first (quality selection), fall back to direct download
+        const streamUrl = await getVideoStreamUrl(photos[idx]);
         if (gen !== loadGen) return;
-        mainVideo.src = photos[idx].fullUrl;
+
+        if (streamUrl && setupHlsVideo(streamUrl)) {
+          // hls.js — Plyr + quality selector populated in MANIFEST_PARSED
+        } else {
+          if (!photos[idx].fullUrl) {
+            photos[idx].fullUrl = await getDownloadUrl(photos[idx].path);
+          }
+          if (gen !== loadGen) return;
+          mainVideo.src = photos[idx].fullUrl;
+          initPlyr(null);  // original-only fallback
+        }
       } catch (e) {
         console.error('Failed to load video:', e);
         if (gen === loadGen) errorOverlay.style.display = 'block';
