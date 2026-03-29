@@ -438,8 +438,13 @@ const prevBtn      = document.getElementById('prev-btn');
         onChange: onQualityChange,
       },
       i18n: { qualityLabel: { '-1': 'Auto', '0': 'Original' } },
-      fullscreen: { iosNative: true },
+      fullscreen: { iosNative: isIOS },
     });
+    // Plyr may strip playsinline on iOS with iosNative — re-apply it
+    if (isIOS && plyrInstance.media) {
+      plyrInstance.media.setAttribute('playsinline', '');
+      plyrInstance.media.setAttribute('webkit-playsinline', '');
+    }
   }
 
   async function onQualityChange(quality) {
