@@ -36,6 +36,46 @@
     #load-btn:active { background: #c93218; }
     #input-status { color: #aaa; font-size: 14px; min-height: 20px; text-align: center; }
 
+    /* ── Album list screen ── */
+    #album-list-screen {
+      display: flex; flex-direction: column; height: 100dvh;
+    }
+    #album-list-header {
+      flex-shrink: 0; padding: 16px 20px;
+      font-size: 20px; font-weight: bold; color: #fff;
+      background: #1a1a1a; border-bottom: 1px solid #2a2a2a;
+    }
+    #album-list-grid {
+      flex: 1; overflow-y: auto; padding: 16px;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px; align-content: start; -webkit-overflow-scrolling: touch;
+    }
+    #album-list-grid::-webkit-scrollbar { width: 4px; }
+    #album-list-grid::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+    .album-card {
+      cursor: pointer; border-radius: 8px; overflow: hidden;
+      background: #1a1a1a; touch-action: manipulation; transition: opacity .15s;
+    }
+    .album-card:hover, .album-card:active { opacity: .8; }
+    .album-card-img { width: 100%; padding-bottom: 100%; position: relative; background: #222; }
+    .album-card-img img {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; display: block;
+    }
+    .album-card.loading .album-card-img::after {
+      content: ''; position: absolute; inset: 0; margin: auto;
+      width: 28px; height: 28px;
+      border: 2px solid rgba(255,255,255,.15); border-top-color: #fc3f1d;
+      border-radius: 50%; animation: spin .7s linear infinite;
+    }
+    .album-card-name {
+      padding: 10px 12px; font-size: 13px; color: #ccc;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 38px;
+    }
+    @media (max-width: 480px) {
+      #album-list-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; padding: 10px; }
+    }
+
     /* ── Gallery screen ── */
     #gallery {
       display: none; position: fixed; inset: 0;
@@ -267,14 +307,18 @@
 <!-- ── Input screen ── -->
 <div id="input-screen">
   <h2>Yandex Disk Album Viewer</h2>
-  <p>
-    Paste an album or item link:
-  </p>
+  <p>Paste an album or item link:</p>
   <input id="album-input" type="text"
     placeholder="https://disk.yandex.com/d/KEY/…"
     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   <button id="load-btn">Open Album</button>
   <div id="input-status"></div>
+</div>
+
+<!-- ── Album list screen ── -->
+<div id="album-list-screen" style="display:none">
+  <div id="album-list-header">Isaac N. Media</div>
+  <div id="album-list-grid"></div>
 </div>
 
 <!-- ── Gallery preview screen ── -->
@@ -315,6 +359,32 @@
 </div>
 
 <script>
+  // ── Album list ─────────────────────────────────────────────────────────────
+  const ALBUM_KEYS = [
+    'lROqbwGTFsfOdA',
+    'c_7ic8YavaxWQw',
+    'QJSAWLzkPL3g2A',
+    'elRbJ1jXUoyyoA',
+    'df4gDI8gHzqj8A',
+    'Ha41Abu1AD1GCA',
+    'PotcQzcNGNmQiQ',
+    'Q6-9YON76b25FQ',
+    'Jdp4_i8_5dYVBw',
+    '698vu7-A4_B1wQ',
+    'QE_9k1vkL57epQ',
+    'Qunuc2uiQTE__g',
+    'j5YlIcpTXvlCxQ',
+    'PSBQHc22PZcjFA',
+    '46Tz82wPGrDiLw',
+    'HA8_i0dwLikLeg',
+    'jZDaC7GzQ3ky3g',
+    '_zaKyQC3rGeZEw',
+    'K5mCEYB6Sqv-5g',
+    'h-I3_37CViUyNg',
+    'IkBGkQT4Z2xf9A',
+    'B2RZ--qor3hj6A',
+  ];
+
   // ── State ──────────────────────────────────────────────────────────────────
   let photos = [];   // [{name, path, preview, fullUrl}]
   let currentIndex = 0;
@@ -332,6 +402,8 @@
   const albumInput   = document.getElementById('album-input');
   const loadBtn      = document.getElementById('load-btn');
   const inputStatus  = document.getElementById('input-status');
+  const albumListScreen = document.getElementById('album-list-screen');
+  const albumListGrid   = document.getElementById('album-list-grid');
   const gallery      = document.getElementById('gallery');
   const galleryGrid  = document.getElementById('gallery-grid');
   const galleryTitle = document.getElementById('gallery-title');
@@ -352,31 +424,9 @@ const prevBtn      = document.getElementById('prev-btn');
   const errorOverlay    = document.getElementById('error-overlay');
   const videoWrapper    = document.getElementById('video-wrapper');
 
-  // ── On load: check URL hash ────────────────────────────────────────────────
-  window.addEventListener('DOMContentLoaded', () => {
-    const hash = location.hash.slice(1);
-    if (hash) {
-      const parts = hash.split('/').filter(Boolean);
-      if (parts.length >= 1) {
-        const albumParam = decodeURIComponent(parts[0]);
-        const itemParam  = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : null;
-        if (itemParam) {
-          inputScreen.style.display = 'none';
-          openViewer();
-          spinner.style.display = 'block';
-        } else {
-          setInputStatus('Loading album\u2026');
-        }
-        parseAndLoad(albumParam, itemParam);
-      }
-    }
-  });
-
-  // ── Input helpers ──────────────────────────────────────────────────────────
+  // ── Input screen helpers ───────────────────────────────────────────────────
   function parseAndLoad(value, imageFile) {
     value = value.trim();
-
-    // Yandex Disk URL
     const urlMatch = value.match(/disk\.yandex\.\w+\/d\/([^/?#]+)|yadi\.sk\/d\/([^/?#]+)/);
     if (urlMatch) {
       albumKey = urlMatch[1] || urlMatch[2];
@@ -389,8 +439,6 @@ const prevBtn      = document.getElementById('prev-btn');
       loadAlbum(imageFile || null);
       return;
     }
-
-    // App URL (e.g. http://localhost:8000/KEY/file.jpg or https://yadisk-album-viewer.pages.dev/KEY/file.jpg)
     try {
       const url = new URL(value);
       const parts = url.pathname.split('/').filter(Boolean);
@@ -402,15 +450,135 @@ const prevBtn      = document.getElementById('prev-btn');
         return;
       }
     } catch (_) {}
-
-    // Plain key
     albumKey = value;
     publicKey = `https://disk.yandex.com/d/${value}`;
     loadAlbum(imageFile || null);
   }
 
+  function setInputStatus(msg) { inputStatus.textContent = msg; }
+
+  function showInputScreen() {
+    inputScreen.style.display = '';
+    albumListScreen.style.display = 'none';
+    gallery.classList.remove('active');
+    viewer.classList.remove('active', 'thumbs-open');
+    thumbsBtn.classList.remove('on');
+    photos = []; publicKey = ''; albumKey = ''; albumName = ''; currentIndex = 0;
+    galleryGrid.innerHTML = '';
+    thumbStrip.innerHTML = '';
+    document.title = 'Yandex Disk Album Viewer';
+    history.replaceState(null, '', location.pathname);
+  }
+
   loadBtn.onclick = () => parseAndLoad(albumInput.value);
   albumInput.addEventListener('keydown', e => { if (e.key === 'Enter') loadBtn.click(); });
+
+  // ── Album list ─────────────────────────────────────────────────────────────
+  let albumListBuilt = false;
+
+  async function fetchAlbumMeta(key) {
+    const pk = `https://disk.yandex.com/d/${key}`;
+    const url = `https://cloud-api.yandex.net/v1/disk/public/resources`
+      + `?public_key=${encodeURIComponent(pk)}`
+      + `&limit=10&preview_size=480x480&preview_crop=true`
+      + `&fields=name,_embedded.items.preview,_embedded.items.mime_type`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    const data = await res.json();
+    const items = data._embedded?.items || [];
+    const preview = items.find(i => i.preview)?.preview || null;
+    return { name: data.name || key, preview };
+  }
+
+  function buildAlbumList() {
+    if (albumListBuilt) return;
+    albumListBuilt = true;
+    const cards = ALBUM_KEYS.map(key => {
+      const card = document.createElement('div');
+      card.className = 'album-card loading';
+      const imgWrap = document.createElement('div');
+      imgWrap.className = 'album-card-img';
+      card.appendChild(imgWrap);
+      const nameEl = document.createElement('div');
+      nameEl.className = 'album-card-name';
+      card.appendChild(nameEl);
+      card.onclick = () => openAlbum(key);
+      albumListGrid.appendChild(card);
+      return { card, imgWrap, nameEl };
+    });
+
+    ALBUM_KEYS.forEach(async (key, i) => {
+      try {
+        const meta = await fetchAlbumMeta(key);
+        const { card, imgWrap, nameEl } = cards[i];
+        card.classList.remove('loading');
+        if (meta.preview) {
+          const img = document.createElement('img');
+          img.src = meta.preview;
+          img.alt = meta.name;
+          imgWrap.appendChild(img);
+        }
+        nameEl.textContent = meta.name;
+      } catch (e) {
+        const { card, nameEl } = cards[i];
+        card.classList.remove('loading');
+        nameEl.textContent = key;
+        console.error(`Failed to load album ${key}:`, e);
+      }
+    });
+  }
+
+  function showAlbumList() {
+    buildAlbumList();
+    inputScreen.style.display = 'none';
+    albumListScreen.style.display = '';
+    gallery.classList.remove('active');
+    viewer.classList.remove('active', 'thumbs-open');
+    thumbsBtn.classList.remove('on');
+    photos = []; publicKey = ''; albumKey = ''; albumName = ''; currentIndex = 0;
+    galleryGrid.innerHTML = '';
+    thumbStrip.innerHTML = '';
+    document.title = 'Isaac N. Media';
+    history.replaceState(null, '', '#isn-media-library');
+  }
+
+  async function openAlbum(key) {
+    publicKey = `https://disk.yandex.com/d/${key}`;
+    albumKey = key;
+    albumListScreen.style.display = 'none';
+    gallery.classList.add('active');
+    galleryTitle.textContent = 'Loading\u2026';
+    galleryCount.textContent = '';
+    galleryGrid.innerHTML = '';
+    await loadAlbum(null);
+  }
+
+  // ── On load: check URL hash ────────────────────────────────────────────────
+  window.addEventListener('DOMContentLoaded', () => {
+    const hash = location.hash.slice(1);
+    if (hash === 'isn-media-library') {
+      showAlbumList();
+    } else if (hash) {
+      const parts = hash.split('/').filter(Boolean);
+      if (parts.length >= 1) {
+        const key = decodeURIComponent(parts[0]);
+        const itemParam = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : null;
+        inputScreen.style.display = 'none';
+        albumListScreen.style.display = 'none';
+        publicKey = `https://disk.yandex.com/d/${key}`;
+        albumKey = key;
+        if (itemParam) {
+          openViewer();
+          spinner.style.display = 'block';
+        } else {
+          gallery.classList.add('active');
+          galleryTitle.textContent = 'Loading\u2026';
+          galleryCount.textContent = '';
+        }
+        loadAlbum(itemParam);
+      }
+    }
+  });
 
   // ── Video / HLS / Plyr helpers ─────────────────────────────────────────────
   // 0 = Original (direct download), -1 = Auto, positive = height in px
@@ -613,12 +781,21 @@ const prevBtn      = document.getElementById('prev-btn');
     return (await res.json()).href;
   }
 
+  function goHome() {
+    if (ALBUM_KEYS.includes(albumKey)) showAlbumList(); else showInputScreen();
+  }
+
   // ── Load album ─────────────────────────────────────────────────────────────
   async function loadAlbum(openFile) {
-    setInputStatus('Loading album\u2026');
+    const fromMediaLibrary = ALBUM_KEYS.includes(albumKey);
+    if (!fromMediaLibrary) setInputStatus('Loading album\u2026');
     try {
       const { items, albumName: fetchedAlbumName } = await fetchAllPhotos();
-      if (!items.length) { setInputStatus('No photos found in this album.'); return; }
+      if (!items.length) {
+        if (!fromMediaLibrary) setInputStatus('No photos found in this album.');
+        else goHome();
+        return;
+      }
 
       if (fetchedAlbumName) { albumName = fetchedAlbumName; document.title = fetchedAlbumName; }
 
@@ -632,8 +809,7 @@ const prevBtn      = document.getElementById('prev-btn');
         mediaType: item.mime_type?.startsWith('video/') ? 'video' : 'image',
       }));
 
-      setInputStatus('');
-      inputScreen.style.display = 'none';
+      if (!fromMediaLibrary) setInputStatus('');
 
       // Prefetch stream URL + HLS manifest levels for all videos in background
       photos.forEach(photo => { if (photo.mediaType === 'video') prefetchVideo(photo); });
@@ -656,7 +832,8 @@ const prevBtn      = document.getElementById('prev-btn');
       }
 
     } catch (err) {
-      setInputStatus('Error: ' + err.message);
+      if (!fromMediaLibrary) setInputStatus('Error: ' + err.message);
+      else goHome();
       console.error(err);
     }
   }
@@ -712,13 +889,7 @@ const prevBtn      = document.getElementById('prev-btn');
   }
 
   function hideGallery() {
-    gallery.classList.remove('active');
-    photos = []; publicKey = ''; albumKey = ''; currentIndex = 0;
-    galleryGrid.innerHTML = '';
-    thumbStrip.innerHTML = '';
-    inputScreen.style.display = '';
-    document.title = 'Yandex Disk Album Viewer';
-    history.replaceState(null, '', location.pathname);
+    goHome();
   }
 
   galleryCloseBtn.onclick = hideGallery;
@@ -735,11 +906,7 @@ const prevBtn      = document.getElementById('prev-btn');
       history.replaceState(null, '', '#' + albumKey);
       showGallery();
     } else {
-      photos = []; publicKey = ''; albumKey = ''; currentIndex = 0;
-      thumbStrip.innerHTML = '';
-      inputScreen.style.display = '';
-      document.title = 'Yandex Disk Album Viewer';
-      history.replaceState(null, '', location.pathname);
+      goHome();
     }
   }
 
@@ -939,9 +1106,7 @@ const prevBtn      = document.getElementById('prev-btn');
   }, { passive: true });
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-  function setInputStatus(msg) { inputStatus.textContent = msg; }
-
-  function updateUrl() {
+function updateUrl() {
     if (!albumKey || !photos.length) return;
     const name = encodeURIComponent(photos[currentIndex].name);
     history.replaceState(null, '', '#' + albumKey + '/' + name);
