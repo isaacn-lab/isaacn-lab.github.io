@@ -426,16 +426,14 @@ const prevBtn      = document.getElementById('prev-btn');
   }
 
   // levels: sorted array of heights from HLS manifest, or null for original-only
-  function initPlyr(levels, hasOriginal = true) {
+  function initPlyr(levels) {
     const video = document.getElementById('main-video');
     plyrInstance = new Plyr(video, {
       controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'settings', 'fullscreen'],
       settings: ['quality'],
       quality: {
         default: levels ? -1 : 0,
-        options: levels
-          ? (hasOriginal ? [-1, ...levels, 0] : [-1, ...levels])
-          : (hasOriginal ? [0] : [-1]),
+        options: levels ? (isMobile || isIOS ? [-1, ...levels] : [-1, ...levels, 0]) : [0],
         forced: true,
         onChange: onQualityChange,
       },
@@ -454,49 +452,38 @@ const prevBtn      = document.getElementById('prev-btn');
     const photo = photos[currentIndex];
 
     if (quality === 0) {
-      // Switch to direct download — desktop only; iOS never shows this option.
-      // Recreate the player so Plyr's internal state stays consistent.
-      const currentTime = plyrInstance?.currentTime || 0;
-      destroyVideo();
+      // Switch to direct download — tear down HLS
+      if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
       if (!photo.fullUrl) photo.fullUrl = await getDownloadUrl(photo.path);
       const video = document.getElementById('main-video');
-      video.src = photo.fullUrl;
-      // Keep HLS quality levels in the menu so the user can switch back
-      initPlyr(photo.hlsLevels || null, true);
-      video.addEventListener('canplay', () => {
-        video.currentTime = currentTime;
-        plyrInstance?.play();
-      }, { once: true });
-    } else if (!Hls.isSupported()) {
-      // iOS native HLS — quality levels are advisory only (browser adapts automatically); no-op
-    } else if (!hlsInstance) {
-      // Switching back to HLS after Original — recreate the player with HLS attached.
       const currentTime = plyrInstance?.currentTime || 0;
-      destroyVideo();
-      const streamUrl = await getVideoStreamUrl(photo);
-      if (!streamUrl) return;
-      const video = document.getElementById('main-video');
-      const hls = new Hls();
-      hlsInstance = hls;
-      hls.loadSource(streamUrl);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
-        const allowed = [1080, 720, 360];
-        const levels = photo.hlsLevels
-          || [...new Set(data.levels.map(l => l.height).filter(h => allowed.includes(h)))].sort((a, b) => b - a);
-        hls.currentLevel = quality === -1 ? -1
-          : hls.levels.reduce((best, l, i) =>
-              Math.abs(l.height - quality) < Math.abs(hls.levels[best].height - quality) ? i : best, 0);
-        initPlyr(levels);
-        plyrInstance.quality = quality;
-        video.currentTime = currentTime;
-        plyrInstance.play();
-      });
-    } else if (quality === -1) {
-      hlsInstance.currentLevel = -1;
+      video.src = photo.fullUrl;
+      video.currentTime = currentTime;
+      plyrInstance?.play();
     } else {
-      hlsInstance.currentLevel = hlsInstance.levels.reduce((best, l, i) =>
-        Math.abs(l.height - quality) < Math.abs(hlsInstance.levels[best].height - quality) ? i : best, 0);
+      // Switching to HLS level — re-attach HLS if it was torn down (was on Original)
+      if (!hlsInstance) {
+        const streamUrl = await getVideoStreamUrl(photo);
+        if (!streamUrl) return;
+        const video = document.getElementById('main-video');
+        const currentTime = plyrInstance?.currentTime || 0;
+        const hls = new Hls();
+        hlsInstance = hls;
+        hls.loadSource(streamUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          hls.currentLevel = quality === -1 ? -1
+            : hls.levels.reduce((best, l, i) =>
+                Math.abs(l.height - quality) < Math.abs(hls.levels[best].height - quality) ? i : best, 0);
+          video.currentTime = currentTime;
+          plyrInstance?.play();
+        });
+      } else if (quality === -1) {
+        hlsInstance.currentLevel = -1;
+      } else {
+        hlsInstance.currentLevel = hlsInstance.levels.reduce((best, l, i) =>
+          Math.abs(l.height - quality) < Math.abs(hlsInstance.levels[best].height - quality) ? i : best, 0);
+      }
     }
   }
 
@@ -582,8 +569,7 @@ const prevBtn      = document.getElementById('prev-btn');
       return true;
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = url;
-      initPlyr(cachedLevels || false, false); // no Original on iOS — direct download breaks native HLS player
-      plyrInstance.quality = -1;
+      initPlyr(cachedLevels || false);
       return true;
     }
     return false;
