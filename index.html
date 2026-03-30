@@ -500,7 +500,9 @@ const prevBtn      = document.getElementById('prev-btn');
     const data = await res.json();
     const items = data._embedded?.items || [];
     const preview = items.find(i => i.preview)?.preview || null;
-    return { name: data.name || key, preview };
+    const rawName = data.name || key;
+    const name = rawName.replace(/\[ISN\]/gi, '').replace(/\b(20\d{2}|19\d{2})\b/g, '').replace(/\s{2,}/g, ' ').trim();
+    return { name, rawName, preview };
   }
 
   function extractYear(name) {
@@ -546,9 +548,10 @@ const prevBtn      = document.getElementById('prev-btn');
 
     // Build placeholder cards — all in a temporary loading section
     const placeholderSection = getOrCreateSection('Loading\u2026');
-    const cardRefs = ALBUM_KEYS.map(key => {
+    const cardRefs = ALBUM_KEYS.map((key, i) => {
       const card = document.createElement('div');
       card.className = 'album-card loading';
+      card.dataset.order = i;
       const imgWrap = document.createElement('div');
       imgWrap.className = 'album-card-img';
       card.appendChild(imgWrap);
@@ -560,6 +563,12 @@ const prevBtn      = document.getElementById('prev-btn');
       return { card, imgWrap, nameEl };
     });
     reorderSections();
+
+    function insertInOrder(grid, card) {
+      const order = Number(card.dataset.order);
+      const sibling = [...grid.children].find(c => Number(c.dataset.order) > order);
+      grid.insertBefore(card, sibling || null);
+    }
 
     ALBUM_KEYS.forEach(async (key, i) => {
       const { card, imgWrap, nameEl } = cardRefs[i];
@@ -573,14 +582,14 @@ const prevBtn      = document.getElementById('prev-btn');
           imgWrap.appendChild(img);
         }
         nameEl.textContent = meta.name;
-        const year = extractYear(meta.name);
+        const year = extractYear(meta.rawName);
         const section = getOrCreateSection(year);
-        section.grid.appendChild(card);
+        insertInOrder(section.grid, card);
       } catch (e) {
         card.classList.remove('loading');
         nameEl.textContent = key;
         const section = getOrCreateSection(null);
-        section.grid.appendChild(card);
+        insertInOrder(section.grid, card);
         console.error(`Failed to load album ${key}:`, e);
       }
       // Remove loading placeholder section once it's empty
