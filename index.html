@@ -320,6 +320,7 @@
   let currentIndex = 0;
   let publicKey = '';
   let albumKey = '';
+  let albumName = '';
   let loadGen = 0;   // incremented on every showPhoto call; stale loads self-cancel
   let fromGallery = false;  // whether the viewer was opened from the gallery
   let hiRes = !window.matchMedia('(hover: none)').matches;  // default: on for desktop, off for mobile
@@ -616,10 +617,10 @@ const prevBtn      = document.getElementById('prev-btn');
   async function loadAlbum(openFile) {
     setInputStatus('Loading album\u2026');
     try {
-      const { items, albumName } = await fetchAllPhotos();
+      const { items, albumName: fetchedAlbumName } = await fetchAllPhotos();
       if (!items.length) { setInputStatus('No photos found in this album.'); return; }
 
-      if (albumName) document.title = albumName;
+      if (fetchedAlbumName) { albumName = fetchedAlbumName; document.title = fetchedAlbumName; }
 
       photos = items.map(item => ({
         name:      item.name,
@@ -666,7 +667,7 @@ const prevBtn      = document.getElementById('prev-btn');
     thumbsBtn.classList.remove('on');
     gallery.classList.add('active');
 
-    galleryTitle.textContent = albumKey;
+    galleryTitle.textContent = albumName || albumKey;
     galleryCount.textContent = `${photos.length} items`;
 
     galleryGrid.innerHTML = '';
