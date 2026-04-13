@@ -1031,7 +1031,7 @@ const prevBtn      = document.getElementById('prev-btn');
     videoWrapper.style.display = isVideo ? 'block' : 'none';
     if (!isVideo) { document.getElementById('main-video')?.pause(); destroyVideo(); }
 
-    spinner.style.display = 'block';
+    if (!photos[idx]._prefetched) spinner.style.display = 'block';
 
     if (isVideo) {
       destroyVideo();
@@ -1103,13 +1103,23 @@ const prevBtn      = document.getElementById('prev-btn');
     // Prefetch adjacent photos in background (only when hi-res is on)
     if (hiRes) {
       prefetch(idx + 1);
+      prefetch(idx + 2);
       prefetch(idx - 1);
     }
   }
 
   async function prefetch(idx) {
-    if (idx < 0 || idx >= photos.length || photos[idx].fullUrl) return;
-    try { photos[idx].fullUrl = await getDownloadUrl(photos[idx].path); } catch (_) {}
+    if (idx < 0 || idx >= photos.length) return;
+    const photo = photos[idx];
+    if (photo.mediaType === 'video') return;
+    if (!photo.fullUrl) {
+      try { photo.fullUrl = await getDownloadUrl(photo.path); } catch (_) { return; }
+    }
+    if (!photo._prefetched) {
+      photo._prefetched = true;
+      const img = new Image();
+      img.src = photo.fullUrl;
+    }
   }
 
   // ── Hi-res toggle ──────────────────────────────────────────────────────────
