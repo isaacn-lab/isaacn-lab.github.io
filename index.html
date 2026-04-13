@@ -1057,44 +1057,51 @@ const prevBtn      = document.getElementById('prev-btn');
         if (gen === loadGen) spinner.style.display = 'none';
       }
     } else {
-      // Image: show preview immediately, then swap to full-res if enabled
-      if (photos[idx].preview) {
-        mainPhoto.src = photos[idx].preview;
-        mainPhoto.classList.add('preview');
+      // If hi-res is already prefetched, show it instantly without preview flash
+      if (hiRes && photos[idx]._prefetched && photos[idx].fullUrl) {
+        mainPhoto.src = photos[idx].fullUrl;
+        mainPhoto.classList.remove('preview');
+        spinner.style.display = 'none';
       } else {
-        mainPhoto.classList.add('preview');
-      }
-
-      if (!hiRes) {
-        // Stay on preview
-        if (gen === loadGen) {
-          mainPhoto.classList.remove('preview');
-          spinner.style.display = 'none';
+        // Image: show preview immediately, then swap to full-res if enabled
+        if (photos[idx].preview) {
+          mainPhoto.src = photos[idx].preview;
+          mainPhoto.classList.add('preview');
+        } else {
+          mainPhoto.classList.add('preview');
         }
-      } else {
-        try {
-          if (!photos[idx].fullUrl) {
-            photos[idx].fullUrl = await getDownloadUrl(photos[idx].path);
-          }
-          if (gen !== loadGen) return;
 
-          const url = photos[idx].fullUrl;
-          await new Promise((resolve, reject) => {
-            const img = new Image();
-            img.onload  = resolve;
-            img.onerror = reject;
-            img.src = url;
-          });
-          if (gen !== loadGen) return;
-
-          mainPhoto.src = url;
-        } catch (e) {
-          console.error('Failed to load photo:', e);
-          if (gen === loadGen) errorOverlay.style.display = 'block';
-        } finally {
+        if (!hiRes) {
+          // Stay on preview
           if (gen === loadGen) {
             mainPhoto.classList.remove('preview');
             spinner.style.display = 'none';
+          }
+        } else {
+          try {
+            if (!photos[idx].fullUrl) {
+              photos[idx].fullUrl = await getDownloadUrl(photos[idx].path);
+            }
+            if (gen !== loadGen) return;
+
+            const url = photos[idx].fullUrl;
+            await new Promise((resolve, reject) => {
+              const img = new Image();
+              img.onload  = resolve;
+              img.onerror = reject;
+              img.src = url;
+            });
+            if (gen !== loadGen) return;
+
+            mainPhoto.src = url;
+          } catch (e) {
+            console.error('Failed to load photo:', e);
+            if (gen === loadGen) errorOverlay.style.display = 'block';
+          } finally {
+            if (gen === loadGen) {
+              mainPhoto.classList.remove('preview');
+              spinner.style.display = 'none';
+            }
           }
         }
       }
