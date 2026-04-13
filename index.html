@@ -1031,7 +1031,7 @@ const prevBtn      = document.getElementById('prev-btn');
     videoWrapper.style.display = isVideo ? 'block' : 'none';
     if (!isVideo) { document.getElementById('main-video')?.pause(); destroyVideo(); }
 
-    if (!photos[idx]._prefetched) spinner.style.display = 'block';
+    if (!photos[idx]._prefetchReady) spinner.style.display = 'block';
 
     if (isVideo) {
       destroyVideo();
@@ -1058,7 +1058,7 @@ const prevBtn      = document.getElementById('prev-btn');
       }
     } else {
       // If hi-res is already prefetched, show it instantly without preview flash
-      if (hiRes && photos[idx]._prefetched && photos[idx].fullUrl) {
+      if (hiRes && photos[idx]._prefetchReady && photos[idx].fullUrl) {
         mainPhoto.src = photos[idx].fullUrl;
         mainPhoto.classList.remove('preview');
         spinner.style.display = 'none';
@@ -1125,6 +1125,7 @@ const prevBtn      = document.getElementById('prev-btn');
     if (!photo._prefetched) {
       photo._prefetched = true;
       const img = new Image();
+      img.onload = () => { photo._prefetchReady = true; };
       img.src = photo.fullUrl;
     }
   }
