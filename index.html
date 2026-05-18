@@ -374,6 +374,8 @@
 <script>
   // ── Album list ─────────────────────────────────────────────────────────────
   const ALBUM_KEYS = [
+    'rGa5QCNxKBvMig',
+    'YBTg_VWjVoFYvg',
     'T8EnVn82w8ObWA',
     'FbANj95MIoSV_Q',
     'qQfvVlYD71h_8g',
@@ -1199,6 +1201,13 @@ const prevBtn      = document.getElementById('prev-btn');
       if (e.key === 'Escape') hideGallery();
     }
   });
+
+  // mouse wheel → horizontal scroll on thumbnail strip
+  thumbStrip.addEventListener('wheel', e => {
+    if (e.deltaY === 0) return;
+    e.preventDefault();
+    thumbStrip.scrollLeft += e.deltaY;
+  }, { passive: false });
 
   // touch swipe (only on the main photo area, not the thumbnail strip)
   let touchStartX = 0;
