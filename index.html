@@ -320,7 +320,7 @@
 <!-- ── Input screen ── -->
 <div id="input-screen">
   <h2>Yandex Disk Album Viewer</h2>
-  <p>Paste an album or item link:</p>
+  <p>Paste an album, library, or item link:</p>
   <input id="album-input" type="text"
     placeholder="https://disk.yandex.com/d/KEY/…"
     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
@@ -330,7 +330,7 @@
 
 <!-- ── Album list screen ── -->
 <div id="album-list-screen" style="display:none">
-  <div id="album-list-header">Isaac N. Media</div>
+  <div id="album-list-header">Media Library</div>
   <div id="album-list-body"></div>
 </div>
 
@@ -372,53 +372,15 @@
 </div>
 
 <script>
-  // ── Album list ─────────────────────────────────────────────────────────────
-  const ALBUM_KEYS = [
-    'rGa5QCNxKBvMig',
-    'YBTg_VWjVoFYvg',
-    'T8EnVn82w8ObWA',
-    'FbANj95MIoSV_Q',
-    'qQfvVlYD71h_8g',
-    'Qg5hmzODRL5b1g',
-    '4QzVU38QyChzkQ',
-    'N-pqKmz3XHKg-w',
-    'iGAJFlh2xAmFRg',
-    '163nhQ0GVjCavQ',
-    'CwdkHjvmjhZnQA',
-    'ymZXQCcAD5H-vg',
-    'yPgBxw1C6eHDFw',
-    'lROqbwGTFsfOdA',
-    'c_7ic8YavaxWQw',
-    'QJSAWLzkPL3g2A',
-    'elRbJ1jXUoyyoA',
-    'df4gDI8gHzqj8A',
-    'Ha41Abu1AD1GCA',
-    'PotcQzcNGNmQiQ',
-    'Q6-9YON76b25FQ',
-    'Jdp4_i8_5dYVBw',
-    '698vu7-A4_B1wQ',
-    'QE_9k1vkL57epQ',
-    'Qunuc2uiQTE__g',
-    'j5YlIcpTXvlCxQ',
-    'PSBQHc22PZcjFA',
-    '46Tz82wPGrDiLw',
-    'HA8_i0dwLikLeg',
-    'jZDaC7GzQ3ky3g',
-    '_zaKyQC3rGeZEw',
-    'K5mCEYB6Sqv-5g',
-    'h-I3_37CViUyNg',
-    'IkBGkQT4Z2xf9A',
-    'B2RZ--qor3hj6A',
-    'jhIu6a92G1VdnA',
-    'kaav-h6E-WNw4w',
-  ];
-
   // ── State ──────────────────────────────────────────────────────────────────
   let photos = [];   // [{name, path, preview, fullUrl}]
   let currentIndex = 0;
   let publicKey = '';
   let albumKey = '';
   let albumName = '';
+  let libraryId = '';       // Yandex Disk public key of the library text file, '' when not in a library
+  let libraryKeys = [];     // album keys parsed from the library text file
+  let libraryName = '';     // display name for the current library (from the text file's name)
   let loadGen = 0;   // incremented on every showPhoto call; stale loads self-cancel
   let fromGallery = false;  // whether the viewer was opened from the gallery
   let hiRes = !window.matchMedia('(hover: none)').matches;  // default: on for desktop, off for mobile
@@ -431,6 +393,7 @@
   const loadBtn      = document.getElementById('load-btn');
   const inputStatus  = document.getElementById('input-status');
   const albumListScreen = document.getElementById('album-list-screen');
+  const albumListHeader = document.getElementById('album-list-header');
   const albumListBody   = document.getElementById('album-list-body');
   const gallery      = document.getElementById('gallery');
   const galleryGrid  = document.getElementById('gallery-grid');
@@ -455,32 +418,30 @@ const prevBtn      = document.getElementById('prev-btn');
   // ── Input screen helpers ───────────────────────────────────────────────────
   function parseAndLoad(value, imageFile) {
     value = value.trim();
+    if (!value) return;
+    let id, rest = [];
     const urlMatch = value.match(/disk\.yandex\.\w+\/d\/([^/?#]+)|yadi\.sk\/d\/([^/?#]+)/);
     if (urlMatch) {
-      albumKey = urlMatch[1] || urlMatch[2];
-      publicKey = `https://disk.yandex.com/d/${albumKey}`;
+      id = urlMatch[1] || urlMatch[2];
       if (!imageFile) {
-        const remainder = value.slice(value.indexOf(albumKey) + albumKey.length);
+        const remainder = value.slice(value.indexOf(id) + id.length);
         if (remainder.startsWith('/') && remainder.length > 1)
           imageFile = remainder.slice(1).split('?')[0].split('#')[0] || null;
       }
-      loadAlbum(imageFile || null);
-      return;
+    } else {
+      try {
+        const url = new URL(value);
+        const parts = url.pathname.split('/').filter(Boolean);
+        if (parts.length >= 1) {
+          id = decodeURIComponent(parts[0]);
+          imageFile = imageFile || (parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : null);
+        }
+      } catch (_) {}
     }
-    try {
-      const url = new URL(value);
-      const parts = url.pathname.split('/').filter(Boolean);
-      if (parts.length >= 1) {
-        albumKey = decodeURIComponent(parts[0]);
-        publicKey = `https://disk.yandex.com/d/${albumKey}`;
-        imageFile = imageFile || (parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : null);
-        loadAlbum(imageFile || null);
-        return;
-      }
-    } catch (_) {}
-    albumKey = value;
-    publicKey = `https://disk.yandex.com/d/${value}`;
-    loadAlbum(imageFile || null);
+    if (!id) id = value;
+    if (imageFile) rest = [imageFile];
+    setInputStatus('Loading…');
+    routeId(id, rest);
   }
 
   function setInputStatus(msg) { inputStatus.textContent = msg; }
@@ -492,6 +453,7 @@ const prevBtn      = document.getElementById('prev-btn');
     viewer.classList.remove('active', 'thumbs-open');
     thumbsBtn.classList.remove('on');
     photos = []; publicKey = ''; albumKey = ''; albumName = ''; currentIndex = 0;
+    libraryId = ''; libraryKeys = []; libraryName = '';
     galleryGrid.innerHTML = '';
     thumbStrip.innerHTML = '';
     document.title = 'Yandex Disk Album Viewer';
@@ -502,7 +464,7 @@ const prevBtn      = document.getElementById('prev-btn');
   albumInput.addEventListener('keydown', e => { if (e.key === 'Enter') loadBtn.click(); });
 
   // ── Album list ─────────────────────────────────────────────────────────────
-  let albumListBuilt = false;
+  let builtLibraryId = null;   // libraryId the album list was last built for
 
   async function fetchAlbumMeta(key) {
     const pk = `https://disk.yandex.com/d/${key}`;
@@ -526,8 +488,8 @@ const prevBtn      = document.getElementById('prev-btn');
   }
 
   function buildAlbumList() {
-    if (albumListBuilt) return;
-    albumListBuilt = true;
+    if (builtLibraryId === libraryId) return;
+    builtLibraryId = libraryId;
 
     // Create a placeholder card per key, grouped by year (unknown at build time)
     // We render placeholders into a flat map keyed by album key, then
@@ -563,7 +525,7 @@ const prevBtn      = document.getElementById('prev-btn');
 
     // Build placeholder cards — all in a temporary loading section
     const placeholderSection = getOrCreateSection('Loading\u2026');
-    const cardRefs = ALBUM_KEYS.map((key, i) => {
+    const cardRefs = libraryKeys.map((key, i) => {
       const card = document.createElement('div');
       card.className = 'album-card loading';
       card.dataset.order = i;
@@ -585,7 +547,7 @@ const prevBtn      = document.getElementById('prev-btn');
       grid.insertBefore(card, sibling || null);
     }
 
-    ALBUM_KEYS.forEach(async (key, i) => {
+    libraryKeys.forEach(async (key, i) => {
       const { card, imgWrap, nameEl } = cardRefs[i];
       try {
         const meta = await fetchAlbumMeta(key);
@@ -627,8 +589,9 @@ const prevBtn      = document.getElementById('prev-btn');
     photos = []; publicKey = ''; albumKey = ''; albumName = ''; currentIndex = 0;
     galleryGrid.innerHTML = '';
     thumbStrip.innerHTML = '';
-    document.title = 'Isaac N. Media';
-    history.replaceState(null, '', '#isn-media-library');
+    albumListHeader.textContent = libraryName || 'Media Library';
+    document.title = libraryName || 'Media Library';
+    history.replaceState(null, '', '#' + libraryId);
   }
 
   async function openAlbum(key) {
@@ -642,32 +605,129 @@ const prevBtn      = document.getElementById('prev-btn');
     await loadAlbum(null);
   }
 
-  // ── On load: check URL hash ────────────────────────────────────────────────
-  window.addEventListener('DOMContentLoaded', () => {
-    const hash = location.hash.slice(1);
-    if (hash === 'isn-media-library') {
-      showAlbumList();
-    } else if (hash) {
-      const parts = hash.split('/').filter(Boolean);
-      if (parts.length >= 1) {
-        const key = decodeURIComponent(parts[0]);
-        const itemParam = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : null;
-        inputScreen.style.display = 'none';
-        albumListScreen.style.display = 'none';
-        publicKey = `https://disk.yandex.com/d/${key}`;
-        albumKey = key;
-        if (itemParam) {
-          openViewer();
-          spinner.style.display = 'block';
-        } else {
-          gallery.classList.add('active');
-          galleryTitle.textContent = 'Loading\u2026';
-          galleryCount.textContent = '';
-        }
-        loadAlbum(itemParam);
+  // ── Resource type detection ───────────────────────────────────────
+  // Resolves whether an id is a folder (album) or a file (assumed to be a
+  // library text file listing album keys, one per line). Folders and
+  // multi-item shares use a /d/ public link; a single file shared directly
+  // uses /i/ instead — try both since the id alone doesn't say which.
+  async function resolveId(id) {
+    for (const prefix of ['d', 'i']) {
+      const pk = `https://disk.yandex.com/${prefix}/${id}`;
+      const url = `https://cloud-api.yandex.net/v1/disk/public/resources`
+        + `?public_key=${encodeURIComponent(pk)}`
+        + `&limit=0&fields=type,mime_type`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        return { type: data.type, mimeType: data.mime_type, publicKey: pk };
       }
+      if (res.status !== 404) throw new Error(`API ${res.status}`);
     }
-  });
+    throw new Error('API 404');
+  }
+
+  // First line of the file is the library's display name; the rest are album keys.
+  async function fetchLibrary(id, publicKey) {
+    const dlUrl = `https://cloud-api.yandex.net/v1/disk/public/resources/download`
+      + `?public_key=${encodeURIComponent(publicKey)}`;
+    const dlRes = await fetch(dlUrl);
+    if (!dlRes.ok) throw new Error(`Download API ${dlRes.status}`);
+    const { href } = await dlRes.json();
+    const textRes = await fetch(href);
+    if (!textRes.ok) throw new Error(`Fetch ${textRes.status}`);
+    const text = await textRes.text();
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const [name, ...keys] = lines;
+    return { name: name || id, keys };
+  }
+
+  // ── Routing: id is either an album folder or a library text file ──────────────────────────────
+  async function routeId(id, rest) {
+    inputScreen.style.display = 'none';
+    albumListScreen.style.display = 'none';
+    gallery.classList.add('active');
+    viewer.classList.remove('active', 'thumbs-open');
+    thumbsBtn.classList.remove('on');
+    galleryTitle.textContent = 'Loading\u2026';
+    galleryCount.textContent = '';
+    galleryGrid.innerHTML = '';
+
+    let meta;
+    try {
+      meta = await resolveId(id);
+    } catch (e) {
+      console.error(e);
+      gallery.classList.remove('active');
+      showInputScreen();
+      setInputStatus(`Couldn't load "${id}": ${e.message}`);
+      return;
+    }
+
+    if (meta.type === 'dir') {
+      libraryId = ''; libraryKeys = []; libraryName = '';
+      albumKey = id;
+      publicKey = meta.publicKey;
+      const itemParam = rest.length ? rest.join('/') : null;
+      if (itemParam) {
+        gallery.classList.remove('active');
+        openViewer();
+        spinner.style.display = 'block';
+      }
+      await loadAlbum(itemParam);
+      return;
+    }
+
+    if (meta.type === 'file' && (!meta.mimeType || meta.mimeType.startsWith('text/'))) {
+      let library;
+      try {
+        library = await fetchLibrary(id, meta.publicKey);
+      } catch (e) {
+        console.error(e);
+        gallery.classList.remove('active');
+        showInputScreen();
+        setInputStatus(`Couldn't load library "${id}": ${e.message}`);
+        return;
+      }
+      libraryId = id;
+      libraryKeys = library.keys;
+      libraryName = library.name;
+
+      if (!rest.length) {
+        gallery.classList.remove('active');
+        showAlbumList();
+        return;
+      }
+
+      albumKey = rest[0];
+      publicKey = `https://disk.yandex.com/d/${albumKey}`;
+      const itemParam = rest.length > 1 ? rest.slice(1).join('/') : null;
+      if (itemParam) {
+        gallery.classList.remove('active');
+        openViewer();
+        spinner.style.display = 'block';
+      }
+      await loadAlbum(itemParam);
+      return;
+    }
+
+    gallery.classList.remove('active');
+    showInputScreen();
+    setInputStatus(`"${id}" is neither an album folder nor a library text file.`);
+  }
+
+  async function routeHash() {
+    const hash = location.hash.slice(1);
+    if (!hash) { showInputScreen(); return; }
+    const parts = hash.split('/').filter(Boolean);
+    if (!parts.length) { showInputScreen(); return; }
+    const id = decodeURIComponent(parts[0]);
+    const rest = parts.slice(1).map(decodeURIComponent);
+    await routeId(id, rest);
+  }
+
+  // ── On load / hash change: route the URL ──────────────────────────────────
+  window.addEventListener('DOMContentLoaded', routeHash);
+  window.addEventListener('hashchange', routeHash);
 
   // ── Video / HLS / Plyr helpers ─────────────────────────────────────────────
   // 0 = Original (direct download), -1 = Auto, positive = height in px
@@ -871,17 +931,17 @@ const prevBtn      = document.getElementById('prev-btn');
   }
 
   function goHome() {
-    if (ALBUM_KEYS.includes(albumKey)) showAlbumList(); else showInputScreen();
+    if (libraryId) showAlbumList(); else showInputScreen();
   }
 
   // ── Load album ─────────────────────────────────────────────────────────────
   async function loadAlbum(openFile) {
-    const fromMediaLibrary = ALBUM_KEYS.includes(albumKey);
+    const fromMediaLibrary = !!libraryId;
     if (!fromMediaLibrary) setInputStatus('Loading album\u2026');
     try {
       const { items, albumName: fetchedAlbumName } = await fetchAllPhotos();
       if (!items.length) {
-        if (!fromMediaLibrary) setInputStatus('No photos found in this album.');
+        if (!fromMediaLibrary) { showInputScreen(); setInputStatus('No photos found in this album.'); }
         else goHome();
         return;
       }
@@ -916,12 +976,12 @@ const prevBtn      = document.getElementById('prev-btn');
         await showPhoto(idx >= 0 ? idx : 0);
       } else {
         // No specific item — show gallery preview
-        history.replaceState(null, '', '#' + albumKey);
+        history.replaceState(null, '', '#' + (libraryId ? libraryId + '/' : '') + albumKey);
         showGallery();
       }
 
     } catch (err) {
-      if (!fromMediaLibrary) setInputStatus('Error: ' + err.message);
+      if (!fromMediaLibrary) { showInputScreen(); setInputStatus('Error: ' + err.message); }
       else goHome();
       console.error(err);
     }
@@ -973,7 +1033,7 @@ const prevBtn      = document.getElementById('prev-btn');
     gallery.classList.remove('active');
     if (!thumbStrip.children.length) buildThumbs();
     openViewer();
-    history.replaceState(null, '', '#' + albumKey + '/' + encodeURIComponent(photos[idx].name));
+    history.replaceState(null, '', '#' + (libraryId ? libraryId + '/' : '') + albumKey + '/' + encodeURIComponent(photos[idx].name));
     showPhoto(idx, { scrollThumbs: false });
   }
 
@@ -992,7 +1052,7 @@ const prevBtn      = document.getElementById('prev-btn');
 
     if (fromGallery) {
       fromGallery = false;
-      history.replaceState(null, '', '#' + albumKey);
+      history.replaceState(null, '', '#' + (libraryId ? libraryId + '/' : '') + albumKey);
       showGallery();
     } else {
       goHome();
@@ -1223,7 +1283,7 @@ const prevBtn      = document.getElementById('prev-btn');
 function updateUrl() {
     if (!albumKey || !photos.length) return;
     const name = encodeURIComponent(photos[currentIndex].name);
-    history.replaceState(null, '', '#' + albumKey + '/' + name);
+    history.replaceState(null, '', '#' + (libraryId ? libraryId + '/' : '') + albumKey + '/' + name);
   }
 </script>
 </body>
