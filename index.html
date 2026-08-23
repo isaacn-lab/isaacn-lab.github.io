@@ -478,13 +478,43 @@ const prevBtn      = document.getElementById('prev-btn');
     const items = data._embedded?.items || [];
     const preview = items.find(i => i.preview)?.preview || null;
     const rawName = data.name || key;
-    const name = rawName.replace(/\[ISN\]/gi, '').replace(/\b(20\d{2}|19\d{2})\b/g, '').replace(/\s{2,}/g, ' ').trim();
-    return { name, rawName, preview };
+    const { name, year, month } = parseAlbumName(rawName);
+    return { name, rawName, preview, year, month };
   }
 
   function extractYear(name) {
     const m = name.match(/\b(20\d{2}|19\d{2})\b/);
     return m ? m[1] : null;
+  }
+
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+  const MONTH_RE = new RegExp(`\\b(${MONTH_NAMES.join('|')})\\b`, 'i');
+
+  function extractMonth(name) {
+    const m = name.match(MONTH_RE);
+    if (!m) return null;
+    return MONTH_NAMES.findIndex(mo => mo.toLowerCase() === m[1].toLowerCase());
+  }
+
+  // Album names look like "[ISN] YYYY [Month] - Name", with month optional.
+  // Parse out year/month for grouping/sorting. The month stays in the
+  // display name (only the year is stripped); if it's missing, the
+  // leftover separator dash is cleaned up instead of being left dangling.
+  function parseAlbumName(rawName) {
+    const cleaned = rawName.replace(/\[ISN\]/gi, '').trim();
+    const dashIdx = cleaned.indexOf(' - ');
+    const prefix = dashIdx === -1 ? cleaned : cleaned.slice(0, dashIdx);
+    const year = extractYear(prefix);
+    const month = extractMonth(prefix);
+    const name = cleaned
+      .replace(/\b(20\d{2}|19\d{2})\b/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+      .replace(/^-\s*/, '')
+      .replace(/\s*-$/, '')
+      .trim();
+    return { name, year, month };
   }
 
   function buildAlbumList() {
@@ -541,9 +571,20 @@ const prevBtn      = document.getElementById('prev-btn');
     });
     reorderSections();
 
+    // Cards sort by month within a section (most recent first); cards whose
+    // month couldn't be determined fall back to the end of the section.
+    function monthSortKey(card) {
+      return card.dataset.month === '' ? -1 : Number(card.dataset.month);
+    }
+
     function insertInOrder(grid, card) {
       const order = Number(card.dataset.order);
-      const sibling = [...grid.children].find(c => Number(c.dataset.order) > order);
+      const monthKey = monthSortKey(card);
+      const sibling = [...grid.children].find(c => {
+        const cMonthKey = monthSortKey(c);
+        if (monthKey !== cMonthKey) return monthKey > cMonthKey;
+        return Number(c.dataset.order) > order;
+      });
       grid.insertBefore(card, sibling || null);
     }
 
@@ -559,12 +600,13 @@ const prevBtn      = document.getElementById('prev-btn');
           imgWrap.appendChild(img);
         }
         nameEl.textContent = meta.name;
-        const year = extractYear(meta.rawName);
-        const section = getOrCreateSection(year);
+        card.dataset.month = meta.month === null ? '' : String(meta.month);
+        const section = getOrCreateSection(meta.year);
         insertInOrder(section.grid, card);
       } catch (e) {
         card.classList.remove('loading');
         nameEl.textContent = key;
+        card.dataset.month = '';
         const section = getOrCreateSection(null);
         insertInOrder(section.grid, card);
         console.error(`Failed to load album ${key}:`, e);
